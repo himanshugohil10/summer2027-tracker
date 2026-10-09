@@ -22,12 +22,14 @@ jobs:
           python-version: '3.11'
 
       - name: Install Dependencies
-        run: pip install requests
+        run: pip install requests google-api-python-client google-auth
 
       - name: Run Pipeline
         env:
           SERPER_API_KEY: ${{ secrets.SERPER_API_KEY }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
         run: python tracker.py
 
       - name: Commit Updated Seen Jobs Cache
