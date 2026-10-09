@@ -2,15 +2,15 @@ name: Daily Summer 2027 Internship & Alumni Tracker
 
 on:
   schedule:
-    # Runs at 13:00 UTC (9:00 AM EST) Mon-Fri
+    # 9:00 AM EST (13:00 UTC) Mon-Fri
     - cron: '0 13 * * 1-5'
-  workflow_dispatch: # Allows manual trigger from Actions tab anytime
+  workflow_dispatch:
 
 jobs:
   track-jobs:
     runs-on: ubuntu-latest
     permissions:
-      contents: write # Needed to commit updated cache back to repo
+      contents: write
 
     steps:
       - name: Checkout Code
@@ -26,8 +26,7 @@ jobs:
 
       - name: Run Pipeline
         env:
-          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
-          GOOGLE_CSE_ID: ${{ secrets.GOOGLE_CSE_ID }}
+          SERPER_API_KEY: ${{ secrets.SERPER_API_KEY }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
         run: python tracker.py
 
