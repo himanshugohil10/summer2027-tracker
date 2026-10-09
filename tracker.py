@@ -69,23 +69,26 @@ def save_seen_cache(seen_set):
 
 def is_strictly_summer_2027(item):
     """
-    STRICT FILTER: Must be strictly Summer 2027.
-    Explicitly rejects Spring, Fall, Winter, 2025, or 2026.
+    STRICT FILTER FOR SUMMER 2027:
+    - Automatically rejects Spring, Fall, Winter, Co-op, 2025, or 2026.
+    - Since this repo is dedicated to 2027, any role tagged 'Summer' or 'Summer 2027' is valid.
     """
     terms = [str(t).lower().strip() for t in item.get("terms", [])]
     title = item.get("title", "").lower()
     
-    # Reject non-summer terms
-    for bad_term in ["spring", "fall", "winter", "co-op", "coop", "2025", "2026"]:
-        if any(bad_term in t for t in terms) and not any("summer" in t and "2027" in t for t in terms):
+    # 1. Immediate rejection of off-season terms or past years
+    off_season_keywords = ["spring", "fall", "winter", "co-op", "coop", "2025", "2026"]
+    for bad in off_season_keywords:
+        if any(bad in t for t in terms):
             return False
-        if bad_term in title and "summer 2027" not in title:
+        if bad in title:
             return False
 
-    has_summer_2027_term = any("summer" in t and "2027" in t for t in terms)
-    has_summer_2027_title = "summer 2027" in title or ("summer" in title and "2027" in title)
-    
-    return has_summer_2027_term or has_summer_2027_title
+    # 2. Accept if marked as Summer (or specifically Summer 2027)
+    is_summer_term = any("summer" in t for t in terms)
+    is_summer_title = "summer" in title or "intern" in title
+
+    return is_summer_term or is_summer_title
 
 def fetch_internships(seen_set):
     try:
