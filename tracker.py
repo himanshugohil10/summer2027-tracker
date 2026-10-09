@@ -6,6 +6,7 @@ import requests
 from datetime import datetime
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
+import base64
 
 SERPER_API_KEY = os.getenv("SERPER_API_KEY")
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
@@ -28,13 +29,30 @@ EXCLUDE_TITLES = [
 ]
 
 def get_sheets_service():
-    if not SERVICE_ACCOUNT_JSON_RAW:
+    raw_val = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON", "").strip()
+    if not raw_val:
+        print("Warning: GOOGLE_SERVICE_ACCOUNT_JSON secret is empty.")
         return None
-    info = json.loads(SERVICE_ACCOUNT_JSON_RAW)
-    creds = Credentials.from_service_account_info(
-        info, scopes=["https://www.googleapis.com/auth/spreadsheets"]
-    )
-    return build("sheets", "v4", credentials=creds)
+
+    # Handle Base64-encoded or raw JSON strings seamlessly
+    try:
+        if raw_val.startswith("{"):
+            info = json.loads(raw_val)
+        else:
+            decoded = base64.b64decode(raw_val).decode("utf-8")
+            info = json.loads(decoded)
+    except Exception as e:
+        print(f"Error parsing service account credentials: {e}")
+        return None
+
+    try:
+        creds = Credentials.from_service_account_info(
+            info, scopes=["https://www.googleapis.com/auth/spreadsheets"]
+        )
+        return build("sheets", "v4", credentials=creds)
+    except Exception as e:
+        print(f"Failed to authenticate with Google Sheets API: {e}")
+        return None
 
 def load_seen_cache():
     if os.path.exists(CACHE_FILE):
