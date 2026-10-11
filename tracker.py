@@ -4,7 +4,7 @@ import json
 import time
 import base64
 import requests
-from datetime import datetime
+from datetime import datetime, timedelta
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 
@@ -13,11 +13,17 @@ DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 SPREADSHEET_ID = os.getenv("SPREADSHEET_ID")
 SERVICE_ACCOUNT_JSON_RAW = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
 
-# Primary & Secondary Data Sources for Summer 2027
+# DUAL SOURCES: SimplifyJobs + CSCareers (Pitt CSC)
 SOURCES = [
     {
+        "name": "SimplifyJobs",
         "url": "https://raw.githubusercontent.com/SimplifyJobs/Summer2027-Internships/dev/.github/scripts/listings.json",
         "type": "simplify"
+    },
+    {
+        "name": "CSCareers / PittCSC",
+        "url": "https://raw.githubusercontent.com/pittcsc/Summer2027-Internships/dev/.github/scripts/listings.json",
+        "type": "pittcsc"
     }
 ]
 
@@ -26,16 +32,17 @@ CACHE_FILE = "seen_jobs.json"
 TARGET_KEYWORDS = [
     "data science", "data scientist", "machine learning", "ml ", "ml/ai", "ai ",
     "artificial intelligence", "applied scientist", "research scientist",
-    "deep learning", "nlp", "computer vision", "generative ai", "llm",
-    "data analyst", "data engineer"
+    "deep learning", "nlp", "generative ai", "llm", "data analyst", "data engineer"
 ]
 
-EXCLUDE_TITLES = [
-    "phd intern", "ph.d. intern", "doctoral intern", "undergraduate only",
-    "high school", "sales intern", "marketing intern", "hr intern"
+# HARD EXCLUSIONS: Zero Computer Vision and Hardware roles
+EXCLUDE_KEYWORDS = [
+    "computer vision", "vision", "opencv", "image processing",
+    "hardware", "firmware", "embedded", "fpga", "asic", "electrical",
+    "pcb", "silicon", "semiconductor", "phd intern", "ph.d.", "doctoral",
+    "undergraduate only", "high school", "sales", "marketing", "hr intern"
 ]
 
-# Common Indian surname indicators for balanced 50/50 quota
 INDIAN_NAME_MARKERS = {
     "patel", "sharma", "gohil", "shah", "singh", "gupta", "kumar", "verma",
     "mehta", "desai", "joshi", "iyer", "nair", "reddy", "rao", "agarwal",
@@ -43,12 +50,24 @@ INDIAN_NAME_MARKERS = {
     "pandey", "tiwari", "shukla", "bhat", "pai", "hegde", "kamath", "prabhu",
     "menon", "pillai", "nambiar", "shetty", "poojary", "naik", "sawant",
     "jadhav", "kadam", "shinde", "pawar", "more", "chavan", "patil", "deshmukh",
-    "joshi", "ghosh", "mukherjee", "chakraborty", "dutta", "choudhury", "roy",
-    "sinha", "srivastava", "saxena", "bhatnagar", "mathur", "kaur", "bajaj",
-    "malhotra", "kapoor", "khanna", "arora", "sethi", "chopra", "chawla",
-    "narang", "grover", "chadha", "ahuja", "sehgal", "trehan", "sur", "oberoi",
-    "jain", "bhandari", "kothari", "lodha", "ostwal", "porwal", "sachdev"
+    "ghosh", "mukherjee", "chakraborty", "dutta", "choudhury", "roy", "sinha",
+    "srivastava", "saxena", "bhatnagar", "mathur", "kaur", "bajaj", "malhotra",
+    "kapoor", "khanna", "arora", "sethi", "chopra", "chawla", "narang", "grover",
+    "jain", "bhandari", "kothari", "lodha"
 }
+
+def clean_url(url: str) -> str:
+    """Strips query parameters, tracking tags, and trailing slashes for zero duplication."""
+    if not url:
+        return ""
+    clean = url.strip().lower().split("?")[0].split("#")[0].rstrip("/")
+    return clean
+
+def make_job_signature(company: str, title: str) -> str:
+    """Creates a unique signature to catch duplicate roles posted with different URLs."""
+    c = re.sub(r'[^a-zA-Z0-9]', '', company.lower())
+    t = re.sub(r'[^a-zA-Z0-9]', '', title.lower())
+    return f"{c}_{t}"
 
 def get_sheets_service():
     raw_val = (SERVICE_ACCOUNT_JSON_RAW or "").strip()
@@ -65,19 +84,19 @@ def get_sheets_service():
         )
         return build("sheets", "v4", credentials=creds)
     except Exception as e:
-        print(f"Failed to authenticate with Google Sheets: {e}")
+        print(f"Error authenticating Sheets: {e}")
         return None
 
-def fetch_existing_sheet_data(service):
+def fetch_existing_sheet_state(service):
     """
-    Reads existing LinkedIn URLs (Col D) and Application Links (Col F)
-    to prevent re-adding duplicate people or jobs.
+    Reads existing alumni URLs, job URLs, and job signatures from Google Sheets.
     """
     existing_alumni_urls = set()
     existing_job_urls = set()
+    existing_signatures = set()
 
     if not service or not SPREADSHEET_ID:
-        return existing_alumni_urls, existing_job_urls
+        return existing_alumni_urls, existing_job_urls, existing_signatures
 
     try:
         res = service.spreadsheets().values().get(
@@ -86,14 +105,21 @@ def fetch_existing_sheet_data(service):
         ).execute()
         rows = res.get("values", [])
         for row in rows:
-            if len(row) >= 4 and row[3]:
-                existing_alumni_urls.add(row[3].strip().lower())
-            if len(row) >= 6 and row[5]:
-                existing_job_urls.add(row[5].strip().lower())
-    except Exception as e:
-        print(f"Note: Could not fetch existing sheet rows: {e}")
+            company = row[1] if len(row) > 1 else ""
+            role = row[4] if len(row) > 4 else ""
+            alumni_link = row[3] if len(row) > 3 else ""
+            job_link = row[5] if len(row) > 5 else ""
 
-    return existing_alumni_urls, existing_job_urls
+            if alumni_link:
+                existing_alumni_urls.add(clean_url(alumni_link))
+            if job_link:
+                existing_job_urls.add(clean_url(job_link))
+            if company and role:
+                existing_signatures.add(make_job_signature(company, role))
+    except Exception as e:
+        print(f"Note on reading sheet data: {e}")
+
+    return existing_alumni_urls, existing_job_urls, existing_signatures
 
 def load_seen_cache():
     if os.path.exists(CACHE_FILE):
@@ -112,7 +138,6 @@ def is_strictly_summer_2027(item):
     terms = [str(t).lower().strip() for t in item.get("terms", [])]
     title = item.get("title", "").lower()
 
-    # Reject off-season / prior years
     for bad in ["spring", "fall", "winter", "co-op", "coop", "2025", "2026"]:
         if any(bad in t for t in terms) and not any("summer" in t and "2027" in t for t in terms):
             return False
@@ -121,23 +146,45 @@ def is_strictly_summer_2027(item):
 
     return any("summer" in t for t in terms) or "summer" in title or "2027" in title
 
-def fetch_internships(seen_set, existing_job_urls):
+def is_within_last_7_days(item):
+    date_posted = item.get("date_posted") or item.get("date_updated")
+    if not date_posted:
+        return True
+    try:
+        if isinstance(date_posted, (int, float)):
+            post_time = datetime.fromtimestamp(date_posted)
+        else:
+            post_time = datetime.fromisoformat(str(date_posted).replace("Z", "+00:00"))
+        return (datetime.now() - post_time.replace(tzinfo=None)) <= timedelta(days=7)
+    except Exception:
+        return True
+
+def fetch_internships_from_all_sources(seen_set, existing_job_urls, existing_signatures):
     eligible = []
+    seen_in_this_run = set()
+
     for src in SOURCES:
         try:
             res = requests.get(src["url"], timeout=20)
-            res.raise_for_status()
+            if res.status_code != 200:
+                continue
             data = res.json()
         except Exception as e:
-            print(f"Error reading source {src['url']}: {e}")
+            print(f"Source {src['name']} not available or error: {e}")
             continue
 
         for item in data:
-            url = str(item.get("url") or "").strip()
-            job_id = str(item.get("id") or url)
+            raw_url = str(item.get("url") or "").strip()
+            norm_url = clean_url(raw_url)
+            job_id = str(item.get("id") or norm_url)
+            company = item.get("company_name", "").strip()
+            title = item.get("title", "").strip().lower()
+            sig = make_job_signature(company, title)
 
-            # Deduplication Check 1: In local cache or already in Sheet
-            if not job_id or job_id in seen_set or url.lower() in existing_job_urls:
+            # --- DEDUPLICATION GATE ---
+            if not norm_url or norm_url in existing_job_urls or norm_url in seen_in_this_run:
+                continue
+            if job_id in seen_set or sig in existing_signatures or sig in seen_in_this_run:
                 continue
 
             if not item.get("active", True) or not item.get("is_visible", True):
@@ -146,10 +193,14 @@ def fetch_internships(seen_set, existing_job_urls):
             if not is_strictly_summer_2027(item):
                 continue
 
-            title = item.get("title", "").lower()
-            if any(exc in title for exc in EXCLUDE_TITLES):
+            if not is_within_last_7_days(item):
                 continue
 
+            # Exclude Computer Vision and Hardware
+            if any(exc in title for exc in EXCLUDE_KEYWORDS):
+                continue
+
+            # Must match target AI / DS / ML track
             if not any(kw in title for kw in TARGET_KEYWORDS):
                 continue
 
@@ -161,18 +212,19 @@ def fetch_internships(seen_set, existing_job_urls):
             if not is_us and locations:
                 continue
 
+            # Passed all filters & uniqueness verification
+            seen_in_this_run.add(norm_url)
+            seen_in_this_run.add(sig)
             eligible.append(item)
+
     return eligible
 
 def is_indian_origin(name, snippet):
     tokens = [t.lower() for t in re.findall(r'\b[a-zA-Z]+\b', name)]
     if any(t in INDIAN_NAME_MARKERS for t in tokens):
         return True
-    
-    # Check Indian education / background references in profile snippet
     indian_cues = ["india", "mumbai", "pune", "delhi", "bangalore", "anna university", "vtu", "bits pilani", "iit", "nit"]
-    snippet_lower = snippet.lower()
-    return any(cue in snippet_lower for cue in indian_cues)
+    return any(cue in snippet.lower() for cue in indian_cues)
 
 def parse_profile(item):
     raw_title = item.get("title", "").replace(" - LinkedIn", "").strip()
@@ -196,9 +248,6 @@ def parse_profile(item):
     }
 
 def find_balanced_neu_alumni(company_name, existing_alumni_urls, target_per_group=3):
-    """
-    Searches and selects a 50/50 distribution of Indian and Non-Indian alumni.
-    """
     clean_company = re.sub(r'[^a-zA-Z0-9\s]', '', company_name).strip()
     if not clean_company:
         return []
@@ -214,7 +263,6 @@ def find_balanced_neu_alumni(company_name, existing_alumni_urls, target_per_grou
     except Exception as e:
         print(f"Alumni search error: {e}")
 
-    # Fallback to broader company query if pool is thin
     if len(candidates) < 6:
         try:
             fallback = f'site:linkedin.com/in "Northeastern University" "{clean_company}"'
@@ -230,9 +278,8 @@ def find_balanced_neu_alumni(company_name, existing_alumni_urls, target_per_grou
 
     for it in candidates:
         link = it.get("link", "").strip()
-        link_clean = link.lower().split("?")[0]
+        link_clean = clean_url(link)
 
-        # Deduplication Check 2: Skip if already in Sheet or already seen in this run
         if not link or "linkedin.com/in/" not in link or link_clean in seen or link_clean in existing_alumni_urls:
             continue
         seen.add(link_clean)
@@ -243,12 +290,11 @@ def find_balanced_neu_alumni(company_name, existing_alumni_urls, target_per_grou
         else:
             non_indian_pool.append(parsed)
 
-    # Balance 50% Indian and 50% Non-Indian
     selected = []
     selected.extend(indian_pool[:target_per_group])
     selected.extend(non_indian_pool[:target_per_group])
 
-    # If one pool is under-represented, backfill from the other
+    # Backfill if one group has fewer hits
     if len(selected) < (target_per_group * 2):
         shortfall = (target_per_group * 2) - len(selected)
         remaining = [c for c in (indian_pool + non_indian_pool) if c not in selected]
@@ -271,21 +317,19 @@ def append_to_sheets(service, rows):
 def send_discord_summary(job_count, people_count, jobs_summary):
     if not DISCORD_WEBHOOK_URL:
         return
-    
     sheet_link = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/edit"
     description = (
-        f"🎯 **Run Complete!**\n\n"
-        f"• **New Summer 2027 Roles Found:** {job_count}\n"
-        f"• **Northeastern Alumni Added:** {people_count} (Balanced 50/50 Split)\n\n"
+        f"☀️ **Good Morning! Here is your 8:00 AM Referral Pipeline Digest:**\n\n"
+        f"• **New Summer 2027 Roles Populated:** {job_count}\n"
+        f"• **Northeastern Alumni Details Populated:** {people_count} (50% Indian / 50% Non-Indian)\n\n"
         f"📊 **[Open Google Sheets Tracker]({sheet_link})**\n\n"
-        f"**Latest Roles Added:**\n" + (jobs_summary or "None")
+        f"**Recently Added Openings:**\n" + (jobs_summary or "_No new openings this morning._")
     )
-
     embed = {
         "title": "⚡ Daily Summer 2027 Referral Pipeline Update",
         "description": description[:2000],
         "color": 13369344,
-        "footer": {"text": f"{datetime.now().strftime('%b %d, %Y')} | Automated Outreach System"}
+        "footer": {"text": f"{datetime.now().strftime('%b %d, %Y')} | Multi-Source Ingestion Engine"}
     }
     requests.post(DISCORD_WEBHOOK_URL, json={"embeds": [embed]}, timeout=10)
 
@@ -294,9 +338,11 @@ def main():
     sheets_service = get_sheets_service()
 
     # Synchronize state directly from live Google Sheet
-    existing_alumni_urls, existing_job_urls = fetch_existing_sheet_data(sheets_service)
-    new_jobs = fetch_internships(seen_cache, existing_job_urls)
-    print(f"Identified {len(new_jobs)} net-new Summer 2027 roles.")
+    existing_alumni_urls, existing_job_urls, existing_signatures = fetch_existing_sheet_state(sheets_service)
+    
+    # Query both SimplifyJobs and CSCareers with deduplication
+    new_jobs = fetch_internships_from_all_sources(seen_cache, existing_job_urls, existing_signatures)
+    print(f"Identified {len(new_jobs)} net-new Summer 2027 roles across all sources.")
 
     sheet_rows = []
     job_summary_lines = []
@@ -306,41 +352,50 @@ def main():
     for job in new_jobs[:10]:
         company = job.get("company_name", "Company")
         role = job.get("title", "Summer 2027 Intern")
-        url = job.get("url", "")
-        job_id = str(job.get("id") or url)
+        raw_url = str(job.get("url") or "")
+        norm_url = clean_url(raw_url)
+        job_id = str(job.get("id") or norm_url)
+        sig = make_job_signature(company, role)
 
-        # Balanced 50% Indian and 50% Non-Indian selection
         alumni = find_balanced_neu_alumni(company, existing_alumni_urls, target_per_group=3)
-        job_summary_lines.append(f"• **{company}** — [{role}]({url}) ({len(alumni)} alumni)")
+        job_summary_lines.append(f"• **{company}** — [{role}]({raw_url}) ({len(alumni)} alumni)")
 
         for alum in alumni:
             sheet_rows.append([
                 alum["first_name"],
                 company,
-                "",  # Left empty for you to paste work email
+                "",  # Left empty for work email
                 alum["url"],
                 role,
-                url,
+                raw_url,
                 "PENDING",
                 today_str
             ])
             total_people_added += 1
-            existing_alumni_urls.add(alum["url"].lower().split("?")[0])
+            existing_alumni_urls.add(clean_url(alum["url"]))
 
         seen_cache.add(job_id)
+        seen_cache.add(norm_url)
+        seen_cache.add(sig)
         time.sleep(1)
 
     if sheet_rows:
         append_to_sheets(sheets_service, sheet_rows)
 
     for job in new_jobs:
-        job_id = str(job.get("id") or job.get("url"))
+        raw_url = str(job.get("url") or "")
+        norm_url = clean_url(raw_url)
+        job_id = str(job.get("id") or norm_url)
+        company = job.get("company_name", "Company")
+        role = job.get("title", "Summer 2027 Intern")
         seen_cache.add(job_id)
+        seen_cache.add(norm_url)
+        seen_cache.add(make_job_signature(company, role))
     save_seen_cache(seen_cache)
 
     summary_text = "\n".join(job_summary_lines)
     send_discord_summary(len(new_jobs[:10]), total_people_added, summary_text)
-    print("Execution complete.")
+    print("Multi-source run completed successfully.")
 
 if __name__ == "__main__":
     main()
