@@ -3,7 +3,7 @@ name: Daily Summer 2027 Internship & Alumni Tracker
 on:
   schedule:
     # 8:00 AM EDT (12:00 UTC) every single day
-    - cron: '0 12 * * *'
+    - cron: '17 08 * * *'
   workflow_dispatch:
 
 jobs:
