@@ -36,6 +36,11 @@ EXCLUDE_ROLE_KEYWORDS = [
     "high school", "sales", "marketing", "hr intern", "recruiting"
 ]
 
+# 3. EXCLUDED COMPANIES (Add any company names you want to skip in lowercase)
+EXCLUDE_COMPANIES = [
+    "tiktok", "bytedance"
+]
+
 # Direct Public ATS Boards
 GREENHOUSE_BOARDS = [
     ("OpenAI", "openai"),
@@ -75,7 +80,10 @@ INDIAN_NAME_MARKERS = {
 def clean_url(url: str) -> str:
     if not url:
         return ""
-    return url.strip().lower().split("?")[0].split("#")[0].rstrip("/")
+    u = url.strip().lower().split("?")[0].split("#")[0].rstrip("/")
+    # Normalize regional LinkedIn subdomains (e.g. in.linkedin.com, ca.linkedin.com -> www.linkedin.com)
+    u = re.sub(r'^https?://([a-z]{2,3}\.)?linkedin\.com/', 'https://www.linkedin.com/', u)
+    return u
 
 def make_job_signature(company: str, title: str) -> str:
     c = re.sub(r'[^a-zA-Z0-9]', '', company.lower())
@@ -168,7 +176,6 @@ def is_graduate_eligible(item: dict, title: str) -> bool:
 
     degrees = [str(d).lower() for d in item.get("degrees", [])]
     if degrees:
-        # If degrees are specified, Masters/Graduate must be included
         has_masters = any("master" in d or "ms" in d or "grad" in d for d in degrees)
         if not has_masters:
             return False
@@ -202,6 +209,9 @@ def fetch_all_internships(seen_set, existing_job_urls, existing_signatures):
 
         for item in data:
             comp = item.get("company_name", "").strip()
+            if any(exc_comp in comp.lower() for exc_comp in EXCLUDE_COMPANIES):
+                continue
+
             role = item.get("title", "").strip()
             raw_url = str(item.get("url") or "").strip()
             norm_url = clean_url(raw_url)
@@ -234,6 +244,8 @@ def fetch_all_internships(seen_set, existing_job_urls, existing_signatures):
 
     # 2. Direct Greenhouse ATS Boards
     for comp_name, token in GREENHOUSE_BOARDS:
+        if any(exc_comp in comp_name.lower() for exc_comp in EXCLUDE_COMPANIES):
+            continue
         try:
             r = requests.get(f"https://boards-api.greenhouse.io/v1/boards/{token}/jobs", timeout=10)
             if r.status_code != 200:
@@ -271,27 +283,18 @@ def is_indian_origin(name: str, snippet: str) -> bool:
     return any(cue in snippet.lower() for cue in indian_cues)
 
 def is_verified_current_neu_alum(raw_title: str, snippet: str, company_name: str) -> bool:
-    """
-    STRICT VERIFICATION:
-    1. Headline in `raw_title` must contain the target company as their current employer.
-    2. Profile title or snippet must explicitly contain 'Northeastern'.
-    3. Rejects snippets where the company is only listed under 'Past:' or 'Formerly'.
-    """
     clean_comp = re.sub(r'[^a-zA-Z0-9\s]', '', company_name).strip().lower()
     title_lower = raw_title.lower()
     snippet_lower = snippet.lower()
     combined = f"{title_lower} {snippet_lower}"
 
-    # Must explicitly mention Northeastern
     if "northeastern" not in combined:
         return False
 
-    # LinkedIn titles follow: "Name - Role at Company | LinkedIn" or "Name - Role - Company | LinkedIn"
     parts = [p.strip().lower() for p in raw_title.replace("| LinkedIn", "").replace("- LinkedIn", "").split(" - ") if p.strip()]
     if len(parts) < 2:
         return False
 
-    # Check that company name appears in the headline (parts[1] or parts[2]), proving current employment
     headline_part = " - ".join(parts[1:])
     comp_tokens = [t for t in clean_comp.split() if len(t) > 2]
     primary_comp_token = comp_tokens[0] if comp_tokens else clean_comp
@@ -299,18 +302,12 @@ def is_verified_current_neu_alum(raw_title: str, snippet: str, company_name: str
     if clean_comp not in headline_part and primary_comp_token not in headline_part:
         return False
 
-    # Guard against "Former ... at Company" in the headline
-    if f"former" in headline_part or f"ex-{primary_comp_token}" in headline_part or f"past:" in headline_part:
+    if "former" in headline_part or f"ex-{primary_comp_token}" in headline_part or "past:" in headline_part:
         return False
 
     return True
 
 def find_verified_balanced_alumni(company_name: str, existing_alumni_urls: set, target_per_group: int = 3):
-    """
-    Finds 5-6 verified current employees at `company_name` who attended Northeastern University.
-     Alumni can be SWE, Data Scientist, Data Engineer, ML Engineer, etc.
-    Enforces a 50% Indian / 50% Non-Indian split.
-    """
     if not SERPER_API_KEY:
         print("Error: SERPER_API_KEY is missing!")
         return []
@@ -321,9 +318,7 @@ def find_verified_balanced_alumni(company_name: str, existing_alumni_urls: set, 
 
     headers = {"X-API-KEY": SERPER_API_KEY, "Content-Type": "application/json"}
 
-    # Query 1: Broad Engineering & Data roles with company in LinkedIn title
     q1 = f'site:linkedin.com/in/ intitle:"{clean_company}" "Northeastern University" (Engineer OR Scientist OR Data OR Developer OR AI)'
-    # Query 2: Targeted Indian background + Northeastern + Company in title
     q2 = f'site:linkedin.com/in/ intitle:"{clean_company}" "Northeastern University" (India OR Mumbai OR Pune OR Bangalore OR Delhi OR Patel OR Sharma OR Shah)'
 
     candidates = []
@@ -343,14 +338,12 @@ def find_verified_balanced_alumni(company_name: str, existing_alumni_urls: set, 
         link = it.get("link", "").strip()
         link_clean = clean_url(link)
 
-        # Must be a personal profile URL (/in/) and not already in Sheet
         if not link or "linkedin.com/in/" not in link_clean or link_clean in seen_links or link_clean in existing_alumni_urls:
             continue
 
         raw_title = it.get("title", "").strip()
         snippet = it.get("snippet", "").replace("\n", " ").strip()
 
-        # Run strict verification: Current Company in Headline + Northeastern in profile
         if not is_verified_current_neu_alum(raw_title, snippet, clean_company):
             continue
 
@@ -360,7 +353,6 @@ def find_verified_balanced_alumni(company_name: str, existing_alumni_urls: set, 
         parts = [p.strip() for p in clean_title.split(" - ") if p.strip()]
         full_name = parts[0] if parts else ""
 
-        # Extract clean First Name
         name_tokens = [t for t in re.findall(r'\b[a-zA-Z]+\b', full_name) if t.lower() not in ["dr", "mr", "ms", "mrs"]]
         if not name_tokens:
             continue
@@ -369,7 +361,7 @@ def find_verified_balanced_alumni(company_name: str, existing_alumni_urls: set, 
         profile_obj = {
             "first_name": first_name,
             "full_name": full_name,
-            "url": link.split("?")[0]
+            "url": clean_url(link)
         }
 
         if is_indian_origin(full_name, snippet):
@@ -377,12 +369,10 @@ def find_verified_balanced_alumni(company_name: str, existing_alumni_urls: set, 
         else:
             non_indian_pool.append(profile_obj)
 
-    # Select 50% Indian (up to 3) and 50% Non-Indian (up to 3)
     selected = []
     selected.extend(indian_pool[:target_per_group])
     selected.extend(non_indian_pool[:target_per_group])
 
-    # Backfill if one side has fewer than 3 verified profiles
     total_target = target_per_group * 2
     if len(selected) < total_target:
         remaining = [p for p in (indian_pool + non_indian_pool) if p not in selected]
@@ -393,12 +383,20 @@ def find_verified_balanced_alumni(company_name: str, existing_alumni_urls: set, 
 def append_to_sheets(service, rows):
     if not service or not rows:
         return
-    body = {"values": rows}
-    service.spreadsheets().values().append(
+
+    # Find the exact first row where Column A (First Name) and Column B (Company) are empty
+    res = service.spreadsheets().values().get(
         spreadsheetId=SPREADSHEET_ID,
-        range="Sheet1!A:H",
+        range="Sheet1!A:B"
+    ).execute()
+    existing_ab = res.get("values", [])
+    next_row = len(existing_ab) + 1
+
+    body = {"values": rows}
+    service.spreadsheets().values().update(
+        spreadsheetId=SPREADSHEET_ID,
+        range=f"Sheet1!A{next_row}:H{next_row + len(rows) - 1}",
         valueInputOption="USER_ENTERED",
-        insertDataOption="INSERT_ROWS",
         body=body
     ).execute()
 
@@ -435,7 +433,6 @@ def main():
     total_people_added = 0
     today_str = datetime.now().strftime("%Y-%m-%d")
 
-    # Process up to 8 new jobs per run to keep Serper usage lean
     for job in new_jobs[:8]:
         company = job["company"]
         role = job["role"]
