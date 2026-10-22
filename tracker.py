@@ -38,7 +38,7 @@ EXCLUDE_ROLE_KEYWORDS = [
 
 # 3. EXCLUDED COMPANIES (Add any company names you want to skip in lowercase)
 EXCLUDE_COMPANIES = [
-    "tiktok", "bytedance"
+    "tiktok", "bytedance", "General Motors"
 ]
 
 # Direct Public ATS Boards
