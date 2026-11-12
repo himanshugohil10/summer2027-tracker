@@ -16,12 +16,14 @@ SERVICE_ACCOUNT_JSON_RAW = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
 
 CACHE_FILE = "seen_jobs.json"
 
-# 1. STRICT INTERNSHIP ROLE KEYWORDS (NO SWE/Software Engineering Internships)
+# 1. STRICT INTERNSHIP ROLE KEYWORDS (AI, DS, ML, Data Eng, Analytics - NO SWE)
 TARGET_ROLE_KEYWORDS = [
     "data science", "data scientist", "machine learning", "ml ", "ml/ai", "ai ",
     "artificial intelligence", "applied scientist", "research scientist",
     "deep learning", "nlp", "natural language", "generative ai", "genai", "llm",
-    "data analyst", "data engineer", "analytics intern", "ai engineer"
+    "data analyst", "data engineer", "analytics", "ai engineer",
+    "business analyst", "decision science", "business intelligence", "bi intern",
+    "product analyst", "quantitative"
 ]
 
 # 2. STRICT EXCLUSIONS (No SWE, No CV, No Hardware, No PhD-only, No Undergrad-only)
@@ -36,32 +38,41 @@ EXCLUDE_ROLE_KEYWORDS = [
     "high school", "sales", "marketing", "hr intern", "recruiting"
 ]
 
-# 3. EXCLUDED COMPANIES (Add any company names you want to skip in lowercase)
+# 3. EXCLUDED COMPANIES
 EXCLUDE_COMPANIES = [
-    "tiktok", "bytedance", "General Motors"
+    "tiktok", "bytedance"
 ]
 
-# Direct Public ATS Boards
+# 4. EXPANDED DIRECT PUBLIC ATS BOARDS (100% Free, Zero Auth)
 GREENHOUSE_BOARDS = [
-    ("OpenAI", "openai"),
-    ("Anthropic", "anthropic"),
-    ("Scale AI", "scaleai"),
-    ("Databricks", "databricks"),
-    ("Stripe", "stripe"),
-    ("Pinterest", "pinterest"),
-    ("Instacart", "instacart"),
-    ("Reddit", "reddit"),
-    ("Lyft", "lyft"),
-    ("DoorDash", "doordash"),
-    ("Roblox", "roblox"),
-    ("Airbnb", "airbnb"),
-    ("Cloudflare", "cloudflare")
+    ("OpenAI", "openai"), ("Anthropic", "anthropic"), ("Scale AI", "scaleai"),
+    ("Databricks", "databricks"), ("Stripe", "stripe"), ("Pinterest", "pinterest"),
+    ("Instacart", "instacart"), ("Reddit", "reddit"), ("Lyft", "lyft"),
+    ("DoorDash", "doordash"), ("Roblox", "roblox"), ("Airbnb", "airbnb"),
+    ("Cloudflare", "cloudflare"), ("Figma", "figma"), ("Coinbase", "coinbase"),
+    ("Robinhood", "robinhood"), ("Duolingo", "duolingo"), ("Brex", "brex"),
+    ("Gusto", "gusto"), ("Affirm", "affirm"), ("Chime", "chime"),
+    ("Plaid", "plaid"), ("Asana", "asana"), ("Dropbox", "dropbox"),
+    ("Twitch", "twitch"), ("Waymo", "waymo"), ("Nuro", "nuro"),
+    ("Aurora", "aurorainnovation"), ("Weights & Biases", "wandb"),
+    ("Together AI", "togetherai"), ("Fireworks AI", "fireworksai"),
+    ("CoreWeave", "coreweave"), ("Glean", "gleanwork"), ("Adept", "adept"),
+    ("Cresta", "cresta"), ("Snorkel AI", "snorkelai"), ("Vectara", "vectara"),
+    (" Arize AI", "arizeai"), ("Modal", "modal"), ("Anyscale", "anyscale"),
+    ("Cockroach Labs", "cockroachlabs"), ("MongoDB", "mongodb"),
+    ("Elastic", "elastic"), (" Samsara", "samsara"), ("Okta", "okta")
 ]
 
 LEVER_BOARDS = [
-    ("Palantir", "palantir"),
-    ("Spotify", "spotify"),
-    ("Cohere", "cohere")
+    ("Palantir", "palantir"), ("Spotify", "spotify"), ("Cohere", "cohere"),
+    ("Mistral AI", "mistral"), ("Zoox", "zoox")
+]
+
+ASHBY_BOARDS = [
+    ("Perplexity", "perplexity"), ("LangChain", "langchain"), ("Ramp", "ramp"),
+    ("Notion", "notion"), ("Linear", "linear"), ("Harvey", "harvey"),
+    ("ElevenLabs", "elevenlabs"), ("DeepL", "deepl"), ("Baseten", "baseten"),
+    ("Patronus AI", "patronus-ai"), ("Writer", "writer"), ("pinecone", "pinecone")
 ]
 
 INDIAN_NAME_MARKERS = {
@@ -81,12 +92,20 @@ def clean_url(url: str) -> str:
     if not url:
         return ""
     u = url.strip().lower().split("?")[0].split("#")[0].rstrip("/")
-    # Normalize regional LinkedIn subdomains (e.g. in.linkedin.com, ca.linkedin.com -> www.linkedin.com)
     u = re.sub(r'^https?://([a-z]{2,3}\.)?linkedin\.com/', 'https://www.linkedin.com/', u)
     return u
 
+def clean_company_for_search(company_name: str) -> str:
+    """Strips legal suffixes so 'The Boeing Company' -> 'Boeing' for accurate LinkedIn matching."""
+    c = re.sub(r'[^a-zA-Z0-9\s&]', ' ', company_name).strip()
+    c = re.sub(r'^the\s+', '', c, flags=re.IGNORECASE)
+    suffixes = r'\b(inc|incorporated|corp|corporation|company|co|llc|ltd|limited|plc|group|holdings|technologies|technology|labs|systems)\b'
+    c = re.sub(suffixes, '', c, flags=re.IGNORECASE)
+    c = re.sub(r'\s+', ' ', c).strip()
+    return c if c else company_name.strip()
+
 def make_job_signature(company: str, title: str) -> str:
-    c = re.sub(r'[^a-zA-Z0-9]', '', company.lower())
+    c = re.sub(r'[^a-zA-Z0-9]', '', clean_company_for_search(company).lower())
     t = re.sub(r'[^a-zA-Z0-9]', '', title.lower())
     return f"{c}_{t}"
 
@@ -152,48 +171,110 @@ def save_seen_cache(seen_set):
     with open(CACHE_FILE, "w") as f:
         json.dump(sorted(list(seen_set)), f, indent=2)
 
-def is_strictly_summer_2027(title: str, terms_list: list) -> bool:
+def is_strictly_summer_2027(title: str, terms_list: list, extra_text: str = "") -> bool:
     title_lower = title.lower()
     terms = [str(t).lower().strip() for t in terms_list]
+    combined = f"{title_lower} {' '.join(terms)} {extra_text.lower()}"
 
-    for bad in ["spring", "fall", "winter", "co-op", "coop", "2025", "2026"]:
-        if any(bad in t for t in terms) and not any("summer" in t and "2027" in t for t in terms):
+    # Reject off-cycle terms or wrong years if Summer 2027 isn't explicitly stated
+    for bad in ["spring 2027", "fall 2026", "fall 2027", "winter 2027", "co-op", "coop", "2025", "summer 2026"]:
+        if bad in combined and "summer 2027" not in combined:
             return False
-        if bad in title_lower and "summer 2027" not in title_lower:
+
+    for bad_term in ["spring", "fall", "winter"]:
+        if bad_term in title_lower and "summer" not in title_lower:
             return False
 
-    return any("summer" in t for t in terms) or "summer" in title_lower or "2027" in title_lower
+    has_2027 = "2027" in combined
+    has_summer_or_intern = "summer" in combined or "intern" in title_lower
+    return has_2027 and has_summer_or_intern
 
-def is_graduate_eligible(item: dict, title: str) -> bool:
+def is_graduate_eligible(item: dict, title: str, extra_text: str = "") -> bool:
     """
     Ensures the internship is eligible for MS / Graduate students.
     Rejects roles restricted solely to Bachelors/Undergrad or solely to PhD.
     """
     title_lower = title.lower()
+    combined = f"{title_lower} {extra_text.lower()}"
+
+    # Block PhD-only or Undergrad-only titles
     if any(k in title_lower for k in ["phd", "ph.d", "doctoral", "undergrad", "bachelor"]):
-        if "master" not in title_lower and "ms " not in title_lower and "grad" not in title_lower:
+        if not any(m in title_lower for m in ["master", "ms ", "m.s.", "grad"]):
             return False
 
+    # Check structured degrees array if available
     degrees = [str(d).lower() for d in item.get("degrees", [])]
     if degrees:
         has_masters = any("master" in d or "ms" in d or "grad" in d for d in degrees)
         if not has_masters:
             return False
 
+    # Check snippet/description text for hard exclusions
+    if any(p in combined for p in ["phd only", "ph.d. only", "exclusively for phd", "must be pursuing a phd", "undergraduate only", "bachelor's only"]):
+        return False
+
     return True
 
 def matches_ai_ds_ml_role(title: str) -> bool:
-    """Strictly AI, ML, Data Science roles; blocks SWE, CV, Hardware, PhD, Undergrad."""
+    """Strictly AI, ML, Data Science, Analytics roles; blocks SWE, CV, Hardware, PhD, Undergrad."""
     title_lower = f" {title.lower()} "
+    if "intern" not in title_lower:
+        return False
     if any(exc in title_lower for exc in EXCLUDE_ROLE_KEYWORDS):
         return False
     return any(kw in title_lower for kw in TARGET_ROLE_KEYWORDS)
+
+def is_us_location(loc_str: str) -> bool:
+    if not loc_str or not loc_str.strip():
+        return True
+    loc = loc_str.lower()
+    non_us = ["uk", "london", "canada", "toronto", "vancouver", "india", "bangalore", "dublin", "germany", "singapore", "beijing", "shanghai", "tokyo", "australia", "sydney", "amsterdam", "paris", "zurich"]
+    us_markers = [
+        "usa", "united states", "u.s.", "remote", ", ca", ", ny", ", ma",
+        ", wa", ", tx", ", il", ", va", ", nj", ", co", ", nc", ", ga",
+        ", pa", ", md", ", az", ", fl", ", oh", ", mi", ", mn", "new york",
+        "san francisco", "seattle", "boston", "austin", "chicago", "menlo park",
+        "mountain view", "palo alto", "sunnyvale", "SAN JOSE", "santa clara", "los angeles", "atlanta", "bellevue", "redmond"
+    ]
+    if any(u in loc for u in us_markers):
+        return True
+    if any(nu in loc for nu in non_us):
+        return False
+    return True
 
 def fetch_all_internships(seen_set, existing_job_urls, existing_signatures):
     openings = []
     seen_in_run = set()
 
-    # 1. Community Trackers (Simplify + PittCSC)
+    def try_add(comp, role, raw_url, terms_list, item_dict, extra_text="", loc_str=""):
+        comp = comp.strip()
+        role = role.strip()
+        raw_url = str(raw_url or "").strip()
+        if not comp or not role or not raw_url:
+            return
+        if any(exc_comp in comp.lower() for exc_comp in EXCLUDE_COMPANIES):
+            return
+        norm_url = clean_url(raw_url)
+        sig = make_job_signature(comp, role)
+
+        if norm_url in existing_job_urls or sig in existing_signatures:
+            return
+        if norm_url in seen_set or sig in seen_set or sig in seen_in_run or norm_url in seen_in_run:
+            return
+        if not matches_ai_ds_ml_role(role):
+            return
+        if not is_strictly_summer_2027(role, terms_list, extra_text):
+            return
+        if not is_graduate_eligible(item_dict, role, extra_text):
+            return
+        if not is_us_location(loc_str):
+            return
+
+        seen_in_run.add(sig)
+        seen_in_run.add(norm_url)
+        openings.append({"company": comp, "role": role, "url": raw_url, "sig": sig})
+
+    # ENGINE 1: Community JSON Trackers (SimplifyJobs + PittCSC)
     tracker_urls = [
         "https://raw.githubusercontent.com/SimplifyJobs/Summer2027-Internships/dev/.github/scripts/listings.json",
         "https://raw.githubusercontent.com/pittcsc/Summer2027-Internships/dev/.github/scripts/listings.json"
@@ -201,77 +282,114 @@ def fetch_all_internships(seen_set, existing_job_urls, existing_signatures):
     for url in tracker_urls:
         try:
             res = requests.get(url, timeout=15)
-            if res.status_code != 200:
-                continue
-            data = res.json()
+            if res.status_code == 200:
+                for item in res.json():
+                    if not item.get("active", True) or not item.get("is_visible", True):
+                        continue
+                    locs = " ".join(item.get("locations", []))
+                    try_add(item.get("company_name", ""), item.get("title", ""), item.get("url", ""), item.get("terms", []), item, "", locs)
         except Exception:
             continue
 
-        for item in data:
-            comp = item.get("company_name", "").strip()
-            if any(exc_comp in comp.lower() for exc_comp in EXCLUDE_COMPANIES):
-                continue
-
-            role = item.get("title", "").strip()
-            raw_url = str(item.get("url") or "").strip()
-            norm_url = clean_url(raw_url)
-            sig = make_job_signature(comp, role)
-
-            if not norm_url or norm_url in existing_job_urls or sig in existing_signatures:
-                continue
-            if norm_url in seen_set or sig in seen_set or sig in seen_in_run:
-                continue
-            if not item.get("active", True) or not item.get("is_visible", True):
-                continue
-            if not is_strictly_summer_2027(role, item.get("terms", [])):
-                continue
-            if not is_graduate_eligible(item, role):
-                continue
-            if not matches_ai_ds_ml_role(role):
-                continue
-
-            locations = " ".join(item.get("locations", [])).lower()
-            is_us = any(x in locations for x in [
-                "usa", "united states", "remote", ", ca", ", ny", ", ma",
-                ", wa", ", tx", ", il", ", va", ", nj", ", co", ", nc"
-            ])
-            if not is_us and locations:
-                continue
-
-            seen_in_run.add(sig)
-            seen_in_run.add(norm_url)
-            openings.append({"company": comp, "role": role, "url": raw_url, "sig": sig})
-
-    # 2. Direct Greenhouse ATS Boards
+    # ENGINE 2: Direct Greenhouse ATS Boards (with content metadata check for 2027)
     for comp_name, token in GREENHOUSE_BOARDS:
-        if any(exc_comp in comp_name.lower() for exc_comp in EXCLUDE_COMPANIES):
-            continue
         try:
-            r = requests.get(f"https://boards-api.greenhouse.io/v1/boards/{token}/jobs", timeout=10)
+            r = requests.get(f"https://boards-api.greenhouse.io/v1/boards/{token}/jobs?content=true", timeout=10)
             if r.status_code != 200:
                 continue
             for j in r.json().get("jobs", []):
-                role = j.get("title", "").strip()
-                raw_url = j.get("absolute_url", "").strip()
-                norm_url = clean_url(raw_url)
-                sig = make_job_signature(comp_name, role)
-
-                if "intern" not in role.lower() or "2027" not in role.lower():
-                    continue
-                if norm_url in existing_job_urls or sig in existing_signatures or sig in seen_set or sig in seen_in_run:
-                    continue
-                if not is_strictly_summer_2027(role, ["summer 2027"]):
-                    continue
-                if not is_graduate_eligible({}, role):
-                    continue
+                role = j.get("title", "")
                 if not matches_ai_ds_ml_role(role):
                     continue
-
-                seen_in_run.add(sig)
-                seen_in_run.add(norm_url)
-                openings.append({"company": comp_name, "role": role, "url": raw_url, "sig": sig})
+                loc_name = (j.get("location") or {}).get("name", "")
+                content_snippet = (j.get("content") or "")[:1500]
+                try_add(comp_name, role, j.get("absolute_url", ""), [], {}, content_snippet, loc_name)
         except Exception:
             continue
+
+    # ENGINE 3: Direct Lever ATS Boards
+    for comp_name, token in LEVER_BOARDS:
+        try:
+            r = requests.get(f"https://api.lever.co/v0/postings/{token}?mode=json", timeout=10)
+            if r.status_code != 200:
+                continue
+            for j in r.json():
+                role = j.get("text", "")
+                if not matches_ai_ds_ml_role(role):
+                    continue
+                loc_name = (j.get("categories") or {}).get("location", "")
+                desc = j.get("descriptionPlain", "")[:1500]
+                try_add(comp_name, role, j.get("hostedUrl", ""), [], {}, desc, loc_name)
+        except Exception:
+            continue
+
+    # ENGINE 4: Direct Ashby ATS Boards
+    for comp_name, token in ASHBY_BOARDS:
+        try:
+            r = requests.get(f"https://api.ashbyhq.com/posting-api/job-board/{token}", timeout=10)
+            if r.status_code != 200:
+                continue
+            for j in r.json().get("jobs", []):
+                role = j.get("title", "")
+                if not matches_ai_ds_ml_role(role):
+                    continue
+                loc_name = j.get("location", "")
+                desc = (j.get("descriptionPlain") or "")[:1500]
+                try_add(comp_name, role, j.get("jobUrl", ""), ["summer 2027"] if "2027" in role else [], {}, desc, loc_name)
+        except Exception:
+            continue
+
+    # ENGINE 5: Serper Global ATS Dorker (Catches Workday, Greenhouse, Lever, Ashby across all companies)
+    if SERPER_API_KEY:
+        headers = {"X-API-KEY": SERPER_API_KEY, "Content-Type": "application/json"}
+        ats_queries = [
+            'site:myworkdayjobs.com "Summer 2027" ("Data Science" OR "Machine Learning" OR "Artificial Intelligence" OR "Data Analyst" OR "Data Engineer") "Intern" -PhD',
+            '(site:boards.greenhouse.io OR site:job-boards.greenhouse.io OR site:jobs.lever.co OR site:jobs.ashbyhq.com) "Summer 2027" ("Data Science" OR "Machine Learning" OR "AI" OR "Data Engineer" OR "Analytics") "Intern" -PhD'
+        ]
+        for q in ats_queries:
+            try:
+                res = requests.post("https://google.serper.dev/search", headers=headers, json={"q": q, "num": 15}, timeout=12)
+                if res.status_code != 200:
+                    continue
+                for item in res.json().get("organic", []):
+                    raw_title = item.get("title", "").strip()
+                    link = item.get("link", "").strip()
+                    snippet = item.get("snippet", "").strip()
+
+                    # Extract Company & Role from ATS page title or URL
+                    comp_guess = ""
+                    role_guess = raw_title
+                    if "myworkdayjobs.com" in link:
+                        m = re.search(r'https?://([a-zA-Z0-9-]+)\.wd\d+\.myworkdayjobs\.com', link)
+                        if m:
+                            comp_guess = m.group(1).replace("-", " ").title()
+                        role_guess = raw_title.split(" - ")[0].split(" | ")[0].strip()
+                    elif "greenhouse.io/" in link:
+                        m = re.search(r'greenhouse\.io/([^/]+)/jobs/', link)
+                        if m:
+                            comp_guess = m.group(1).replace("-", " ").title()
+                        if " at " in raw_title:
+                            parts = raw_title.split(" at ")
+                            role_guess = parts[0].replace("Job Application for ", "").strip()
+                            comp_guess = parts[-1].split(" | ")[0].split(" - ")[0].strip()
+                    elif "lever.co/" in link:
+                        m = re.search(r'lever\.co/([^/]+)/', link)
+                        if m:
+                            comp_guess = m.group(1).replace("-", " ").title()
+                        if " - " in raw_title:
+                            parts = raw_title.split(" - ")
+                            comp_guess = parts[0].strip()
+                            role_guess = " - ".join(parts[1:]).strip()
+                    elif "ashbyhq.com/" in link:
+                        m = re.search(r'ashbyhq\.com/([^/]+)/', link)
+                        if m:
+                            comp_guess = m.group(1).replace("-", " ").title()
+                        role_guess = raw_title.split(" @ ")[0].split(" - ")[0].strip()
+
+                    if comp_guess and role_guess:
+                        try_add(comp_guess, role_guess, link, ["summer 2027"], {}, snippet, snippet)
+            except Exception as e:
+                print(f"Serper ATS Dork error: {e}")
 
     return openings
 
@@ -279,11 +397,17 @@ def is_indian_origin(name: str, snippet: str) -> bool:
     tokens = [t.lower() for t in re.findall(r'\b[a-zA-Z]+\b', name)]
     if any(t in INDIAN_NAME_MARKERS for t in tokens):
         return True
-    indian_cues = ["india", "mumbai", "pune", "delhi", "bangalore", "hyderabad", "chennai", "anna university", "vtu", "bits pilani", "iit", "nit", "srm", "vit"]
+    indian_cues = ["india", "mumbai", "pune", "delhi", "bangalore", "bengaluru", "hyderabad", "chennai", "kolkata", "ahmedabad", "anna university", "vtu", "bits pilani", "iit", "nit", "srm", "vit", "jntu", "kiit", "manipal"]
     return any(cue in snippet.lower() for cue in indian_cues)
 
-def is_verified_current_neu_alum(raw_title: str, snippet: str, company_name: str) -> bool:
-    clean_comp = re.sub(r'[^a-zA-Z0-9\s]', '', company_name).strip().lower()
+def is_verified_current_neu_alum(raw_title: str, snippet: str, clean_company: str) -> bool:
+    """
+    STRICT VERIFICATION:
+    1. Profile title or snippet must explicitly contain 'Northeastern'.
+    2. Target company must appear in the current headline OR in the 'Experience: Company' / 'Current: ... at Company' snippet block.
+    3. Rejects 'Former', 'Ex-', or 'Past:' matches.
+    """
+    comp_lower = clean_company.lower().strip()
     title_lower = raw_title.lower()
     snippet_lower = snippet.lower()
     combined = f"{title_lower} {snippet_lower}"
@@ -291,18 +415,32 @@ def is_verified_current_neu_alum(raw_title: str, snippet: str, company_name: str
     if "northeastern" not in combined:
         return False
 
-    parts = [p.strip().lower() for p in raw_title.replace("| LinkedIn", "").replace("- LinkedIn", "").split(" - ") if p.strip()]
-    if len(parts) < 2:
+    comp_tokens = [t for t in re.findall(r'\b[a-z0-9]+\b', comp_lower) if len(t) > 2]
+    primary_token = comp_tokens[0] if comp_tokens else comp_lower
+
+    # Parse LinkedIn title: "Name - Headline | LinkedIn"
+    cleaned_t = raw_title.replace("| LinkedIn", "").replace("- LinkedIn", "")
+    parts = [p.strip().lower() for p in cleaned_t.split(" - ") if p.strip()]
+    headline_part = " - ".join(parts[1:]) if len(parts) >= 2 else title_lower
+
+    in_headline = (comp_lower in headline_part) or (len(primary_token) >= 3 and primary_token in headline_part)
+
+    # Check structured current experience cues in Google's LinkedIn snippet when Google truncates long titles with '...'
+    in_current_snippet = any(
+        cue in snippet_lower for cue in [
+            f"experience: {comp_lower}",
+            f"experience: {primary_token}",
+            f"at {comp_lower}",
+            f"@ {comp_lower}"
+        ]
+    )
+
+    if not in_headline and not in_current_snippet:
         return False
 
-    headline_part = " - ".join(parts[1:])
-    comp_tokens = [t for t in clean_comp.split() if len(t) > 2]
-    primary_comp_token = comp_tokens[0] if comp_tokens else clean_comp
-
-    if clean_comp not in headline_part and primary_comp_token not in headline_part:
-        return False
-
-    if "former" in headline_part or f"ex-{primary_comp_token}" in headline_part or "past:" in headline_part:
+    # Reject former employees
+    bad_cues = [f"former {comp_lower}", f"formerly at {comp_lower}", f"ex-{primary_token}", f"ex {primary_token}", f"past: {comp_lower}"]
+    if any(b in combined for b in bad_cues) or "former" in headline_part:
         return False
 
     return True
@@ -312,23 +450,24 @@ def find_verified_balanced_alumni(company_name: str, existing_alumni_urls: set, 
         print("Error: SERPER_API_KEY is missing!")
         return []
 
-    clean_company = re.sub(r'[^a-zA-Z0-9\s]', '', company_name).strip()
-    if not clean_company:
+    search_comp = clean_company_for_search(company_name)
+    if not search_comp:
         return []
 
     headers = {"X-API-KEY": SERPER_API_KEY, "Content-Type": "application/json"}
 
-    q1 = f'site:linkedin.com/in/ intitle:"{clean_company}" "Northeastern University" (Engineer OR Scientist OR Data OR Developer OR AI)'
-    q2 = f'site:linkedin.com/in/ intitle:"{clean_company}" "Northeastern University" (India OR Mumbai OR Pune OR Bangalore OR Delhi OR Patel OR Sharma OR Shah)'
+    # Uncapped search queries (no intitle: bottleneck) so truncated LinkedIn headlines aren't hidden
+    q1 = f'site:linkedin.com/in/ "{search_comp}" "Northeastern University" (Engineer OR Scientist OR Data OR Developer OR AI OR Analyst)'
+    q2 = f'site:linkedin.com/in/ "{search_comp}" "Northeastern University" (India OR Mumbai OR Pune OR Bangalore OR Hyderabad OR Patel OR Sharma OR Shah OR Singh OR Gupta)'
 
     candidates = []
     for q in [q1, q2]:
         try:
-            res = requests.post("https://google.serper.dev/search", headers=headers, json={"q": q, "num": 10}, timeout=12)
+            res = requests.post("https://google.serper.dev/search", headers=headers, json={"q": q, "num": 15}, timeout=12)
             if res.status_code == 200:
                 candidates.extend(res.json().get("organic", []))
         except Exception as e:
-            print(f"Serper search error for {clean_company}: {e}")
+            print(f"Serper search error for {search_comp}: {e}")
 
     indian_pool = []
     non_indian_pool = []
@@ -344,7 +483,7 @@ def find_verified_balanced_alumni(company_name: str, existing_alumni_urls: set, 
         raw_title = it.get("title", "").strip()
         snippet = it.get("snippet", "").replace("\n", " ").strip()
 
-        if not is_verified_current_neu_alum(raw_title, snippet, clean_company):
+        if not is_verified_current_neu_alum(raw_title, snippet, search_comp):
             continue
 
         seen_links.add(link_clean)
@@ -353,7 +492,7 @@ def find_verified_balanced_alumni(company_name: str, existing_alumni_urls: set, 
         parts = [p.strip() for p in clean_title.split(" - ") if p.strip()]
         full_name = parts[0] if parts else ""
 
-        name_tokens = [t for t in re.findall(r'\b[a-zA-Z]+\b', full_name) if t.lower() not in ["dr", "mr", "ms", "mrs"]]
+        name_tokens = [t for t in re.findall(r'\b[a-zA-Z]+\b', full_name) if t.lower() not in ["dr", "mr", "ms", "mrs", "er"]]
         if not name_tokens:
             continue
         first_name = name_tokens[0].capitalize()
@@ -361,7 +500,7 @@ def find_verified_balanced_alumni(company_name: str, existing_alumni_urls: set, 
         profile_obj = {
             "first_name": first_name,
             "full_name": full_name,
-            "url": clean_url(link)
+            "url": link_clean
         }
 
         if is_indian_origin(full_name, snippet):
@@ -384,7 +523,6 @@ def append_to_sheets(service, rows):
     if not service or not rows:
         return
 
-    # Find the exact first row where Column A (First Name) and Column B (Company) are empty
     res = service.spreadsheets().values().get(
         spreadsheetId=SPREADSHEET_ID,
         range="Sheet1!A:B"
@@ -406,7 +544,7 @@ def send_discord_summary(job_count, people_count, lines_summary):
     sheet_link = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/edit"
     description = (
         f"☀️ **Good Morning! Here is your 8:00 AM Referral Pipeline Digest:**\n\n"
-        f"• **New Graduate AI/DS/ML Roles Found:** {job_count}\n"
+        f"• **New Graduate AI/DS/ML Roles Populated:** {job_count}\n"
         f"• **Verified Northeastern Alumni Added:** {people_count} (50% Indian / 50% Non-Indian)\n\n"
         f"📊 **[Open Google Sheets Tracker]({sheet_link})**\n\n"
         f"**Recently Added Openings:**\n" + (lines_summary or "_No new openings this morning._")
@@ -415,7 +553,7 @@ def send_discord_summary(job_count, people_count, lines_summary):
         "title": "⚡ Daily Summer 2027 Referral Pipeline Update",
         "description": description[:2000],
         "color": 13369344,
-        "footer": {"text": f"{datetime.now().strftime('%b %d, %Y')} | Verified Alumni & Grad AI/DS/ML Filter"}
+        "footer": {"text": f"{datetime.now().strftime('%b %d, %Y')} | 5-Engine ATS & Verified NEU Pipeline"}
     }
     requests.post(DISCORD_WEBHOOK_URL, json={"embeds": [embed]}, timeout=10)
 
@@ -426,20 +564,33 @@ def main():
     existing_alumni_urls, existing_job_urls, existing_signatures = fetch_existing_sheet_state(sheets_service)
     new_jobs = fetch_all_internships(seen_cache, existing_job_urls, existing_signatures)
 
-    print(f"Discovered {len(new_jobs)} net-new Graduate Summer 2027 AI/DS/ML roles.")
+    print(f"Discovered {len(new_jobs)} net-new Graduate Summer 2027 AI/DS/ML candidate roles.")
 
     sheet_rows = []
     summary_lines = []
     total_people_added = 0
+    jobs_populated = 0
     today_str = datetime.now().strftime("%Y-%m-%d")
 
-    for job in new_jobs[:8]:
+    # Fill up to 10 roles that actually yield verified Northeastern alumni
+    for job in new_jobs:
+        if jobs_populated >= 10:
+            break
+
         company = job["company"]
         role = job["role"]
         job_url = job["url"]
         sig = job["sig"]
 
         alumni_list = find_verified_balanced_alumni(company, existing_alumni_urls, target_per_group=3)
+        seen_cache.add(sig)
+        seen_cache.add(clean_url(job_url))
+
+        # Only populate roles where at least 1 verified NEU alum works at the company
+        if not alumni_list:
+            continue
+
+        jobs_populated += 1
         summary_lines.append(f"• **{company}** — [{role}]({job_url}) ({len(alumni_list)} verified alumni)")
 
         for alum in alumni_list:
@@ -456,17 +607,15 @@ def main():
             total_people_added += 1
             existing_alumni_urls.add(clean_url(alum["url"]))
 
-        seen_cache.add(sig)
-        seen_cache.add(clean_url(job_url))
-        time.sleep(1)
+        time.sleep(0.8)
 
     if sheet_rows:
         append_to_sheets(sheets_service, sheet_rows)
 
     save_seen_cache(seen_cache)
     summary_text = "\n".join(summary_lines)
-    send_discord_summary(len(new_jobs[:8]), total_people_added, summary_text)
-    print(f"Completed: Added {total_people_added} verified alumni across {len(new_jobs[:8])} roles.")
+    send_discord_summary(jobs_populated, total_people_added, summary_text)
+    print(f"Completed: Added {total_people_added} verified alumni across {jobs_populated} roles.")
 
 if __name__ == "__main__":
     main()
