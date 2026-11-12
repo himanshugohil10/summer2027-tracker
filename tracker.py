@@ -16,18 +16,21 @@ SERVICE_ACCOUNT_JSON_RAW = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
 
 CACHE_FILE = "seen_jobs.json"
 
-# 1. STRICT INTERNSHIP ROLE KEYWORDS (AI, DS, ML, Data Eng, Analytics - NO SWE)
+# 1. STRICT INTERNSHIP ROLE KEYWORDS (AI, DS, ML, Data Eng, Analytics - NO SWE, NO QUANT)
 TARGET_ROLE_KEYWORDS = [
     "data science", "data scientist", "machine learning", "ml ", "ml/ai", "ai ",
     "artificial intelligence", "applied scientist", "research scientist",
     "deep learning", "nlp", "natural language", "generative ai", "genai", "llm",
     "data analyst", "data engineer", "analytics", "ai engineer",
     "business analyst", "decision science", "business intelligence", "bi intern",
-    "product analyst", "quantitative"
+    "product analyst"
 ]
 
-# 2. STRICT EXCLUSIONS (No SWE, No CV, No Hardware, No PhD-only, No Undergrad-only)
+# 2. STRICT EXCLUSIONS (No SWE, No Quant/Trading, No CV, No Hardware, No PhD-only, No Undergrad-only)
 EXCLUDE_ROLE_KEYWORDS = [
+    "quant", "quantitative", "trading", "trader", "algo ", "algorithmic",
+    "fixed income", "equities", "derivatives", "hedge fund", "market making",
+    "portfolio", "investment", "actuarial", "actuary",
     "software engineer", "software developer", "swe ", "full stack", "fullstack",
     "frontend", "front-end", "backend", "back-end", "ios ", "android",
     "computer vision", "vision", "opencv", "image processing",
@@ -38,9 +41,15 @@ EXCLUDE_ROLE_KEYWORDS = [
     "high school", "sales", "marketing", "hr intern", "recruiting"
 ]
 
-# 3. EXCLUDED COMPANIES
+# 3. EXCLUDED COMPANIES (TikTok/ByteDance + Pure HFT/Prop Trading Firms)
 EXCLUDE_COMPANIES = [
-    "tiktok", "bytedance"
+    "tiktok", "bytedance",
+    "jane street", "citadel", "five rings", "optiver", "imc trading", "imc ",
+    "susquehanna", "sig ", "drw", "hudson river trading", "hrt", "jump trading",
+    "akuna", "belvedere", "old mission", "valkyrie", "ctc", "chicago trading",
+    "wolverine", "tower research", "de shaw", "d. e. shaw", "two sigma",
+    "point72", "millennium", "balyasny", "virtu", "flow traders", "maven securities",
+    "aquatic", "radix", "headlands", "transmarket", "gelber", "group one"
 ]
 
 # 4. EXPANDED DIRECT PUBLIC ATS BOARDS (100% Free, Zero Auth)
