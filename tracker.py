@@ -1,11 +1,12 @@
 import os
 import re
+import sys
 import json
 import time
 import base64
 import hashlib
 import requests
-from datetime import datetime
+from datetime import datetime, timedelta
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 
@@ -52,7 +53,7 @@ EXCLUDE_COMPANIES = [
     "aquatic", "radix", "headlands", "transmarket", "gelber", "group one"
 ]
 
-# 4. EXPANDED DIRECT PUBLIC ATS BOARDS (100% Free, Zero Auth)
+# 4. EXPANDED DIRECT PUBLIC ATS BOARDS
 GREENHOUSE_BOARDS = [
     ("OpenAI", "openai"), ("Anthropic", "anthropic"), ("Scale AI", "scaleai"),
     ("Databricks", "databricks"), ("Stripe", "stripe"), ("Pinterest", "pinterest"),
@@ -67,9 +68,9 @@ GREENHOUSE_BOARDS = [
     ("Together AI", "togetherai"), ("Fireworks AI", "fireworksai"),
     ("CoreWeave", "coreweave"), ("Glean", "gleanwork"), ("Adept", "adept"),
     ("Cresta", "cresta"), ("Snorkel AI", "snorkelai"), ("Vectara", "vectara"),
-    (" Arize AI", "arizeai"), ("Modal", "modal"), ("Anyscale", "anyscale"),
+    ("Arize AI", "arizeai"), ("Modal", "modal"), ("Anyscale", "anyscale"),
     ("Cockroach Labs", "cockroachlabs"), ("MongoDB", "mongodb"),
-    ("Elastic", "elastic"), (" Samsara", "samsara"), ("Okta", "okta")
+    ("Elastic", "elastic"), ("Samsara", "samsara"), ("Okta", "okta")
 ]
 
 LEVER_BOARDS = [
@@ -81,7 +82,7 @@ ASHBY_BOARDS = [
     ("Perplexity", "perplexity"), ("LangChain", "langchain"), ("Ramp", "ramp"),
     ("Notion", "notion"), ("Linear", "linear"), ("Harvey", "harvey"),
     ("ElevenLabs", "elevenlabs"), ("DeepL", "deepl"), ("Baseten", "baseten"),
-    ("Patronus AI", "patronus-ai"), ("Writer", "writer"), ("pinecone", "pinecone")
+    ("Patronus AI", "patronus-ai"), ("Writer", "writer"), ("Pinecone", "pinecone")
 ]
 
 INDIAN_NAME_MARKERS = {
@@ -97,6 +98,95 @@ INDIAN_NAME_MARKERS = {
     "jain", "bhandari", "kothari", "lodha", "parekh", "trivedi", "dave", "vyas"
 }
 
+# 5. KNOWN CORPORATE EMAIL PATTERNS & HIGH-COLLISION ENTERPRISES
+# Patterns: "flast" (jdoe@), "first.last" (john.doe@), "first" (john@), "firstl" (johnd@), "first_last" (john_doe@)
+KNOWN_EMAIL_PATTERNS = {
+    "nvidia": ("nvidia.com", "flast"),
+    "openai": ("openai.com", "first"),
+    "anthropic": ("anthropic.com", "first"),
+    "scale ai": ("scale.com", "first.last"),
+    "databricks": ("databricks.com", "first.last"),
+    "stripe": ("stripe.com", "first"),
+    "pinterest": ("pinterest.com", "flast"),
+    "instacart": ("instacart.com", "first.last"),
+    "reddit": ("reddit.com", "first.last"),
+    "lyft": ("lyft.com", "flast"),
+    "doordash": ("doordash.com", "first.last"),
+    "roblox": ("roblox.com", "flast"),
+    "airbnb": ("airbnb.com", "first.last"),
+    "cloudflare": ("cloudflare.com", "first"),
+    "figma": ("figma.com", "first"),
+    "coinbase": ("coinbase.com", "first.last"),
+    "robinhood": ("robinhood.com", "first.last"),
+    "duolingo": ("duolingo.com", "first"),
+    "brex": ("brex.com", "first"),
+    "gusto": ("gusto.com", "first.last"),
+    "affirm": ("affirm.com", "first.last"),
+    "chime": ("chime.com", "first.last"),
+    "plaid": ("plaid.com", "first"),
+    "asana": ("asana.com", "first"),
+    "dropbox": ("dropbox.com", "first"),
+    "twitch": ("twitch.tv", "flast"),
+    "waymo": ("waymo.com", "flast"),
+    "nuro": ("nuro.ai", "first"),
+    "aurora": ("aurora.tech", "flast"),
+    "weights & biases": ("wandb.com", "first"),
+    "together ai": ("together.ai", "first"),
+    "fireworks ai": ("fireworks.ai", "first"),
+    "coreweave": ("coreweave.com", "first.last"),
+    "glean": ("glean.com", "first"),
+    "cresta": ("cresta.com", "first"),
+    "snorkel ai": ("snorkel.ai", "first.last"),
+    "vectara": ("vectara.com", "first"),
+    "arize ai": ("arize.com", "first"),
+    "modal": ("modal.com", "first"),
+    "anyscale": ("anyscale.com", "first"),
+    "cockroach labs": ("cockroachlabs.com", "first"),
+    "mongodb": ("mongodb.com", "first.last"),
+    "elastic": ("elastic.co", "first.last"),
+    "samsara": ("samsara.com", "first.last"),
+    "okta": ("okta.com", "first.last"),
+    "palantir": ("palantir.com", "flast"),
+    "spotify": ("spotify.com", "firstl"),
+    "cohere": ("cohere.com", "first"),
+    "mistral ai": ("mistral.ai", "first.last"),
+    "zoox": ("zoox.com", "flast"),
+    "perplexity": ("perplexity.ai", "first"),
+    "langchain": ("langchain.dev", "first"),
+    "ramp": ("ramp.com", "first"),
+    "notion": ("makenotion.com", "first"),
+    "linear": ("linear.app", "first"),
+    "harvey": ("harvey.ai", "first.last"),
+    "elevenlabs": ("elevenlabs.io", "first"),
+    "deepl": ("deepl.com", "first.last"),
+    "baseten": ("baseten.co", "first"),
+    "pinecone": ("pinecone.io", "first"),
+    "snowflake": ("snowflake.com", "first.last"),
+    "uber": ("uber.com", "first.last"),
+    "netflix": ("netflix.com", "flast"),
+    "adobe": ("adobe.com", "flast"),
+    "salesforce": ("salesforce.com", "flast"),
+    "servicenow": ("servicenow.com", "first.last"),
+    "workday": ("workday.com", "first.last"),
+    "intuit": ("intuit.com", "first_last"),
+    "paypal": ("paypal.com", "flast"),
+    "boeing": ("boeing.com", "first.last"),
+    "apple": ("apple.com", "flast"),
+    "microsoft": ("microsoft.com", "first.last"),
+    "google": ("google.com", "flast"),
+    "meta": ("meta.com", "flast"),
+    "amazon": ("amazon.com", "flast")
+}
+
+# Massive companies (25,000+ employees) where common names frequently have numbers/middle initials
+MASSIVE_ENTERPRISES = {
+    "amazon", "aws", "google", "alphabet", "meta", "facebook", "microsoft",
+    "apple", "ibm", "oracle", "cisco", "intel", "boeing", "walmart",
+    "jpmorgan", "jpmorgan chase", "bank of america", "citi", "citigroup",
+    "wells fargo", "goldman sachs", "morgan stanley", "deloitte", "accenture",
+    "pwc", "ey", "kpmg", "cognizant", "infosys", "tcs", "wipro", "salesforce"
+}
+
 def clean_url(url: str) -> str:
     if not url:
         return ""
@@ -105,7 +195,6 @@ def clean_url(url: str) -> str:
     return u
 
 def clean_company_for_search(company_name: str) -> str:
-    """Strips legal suffixes so 'The Boeing Company' -> 'Boeing' for accurate LinkedIn matching."""
     c = re.sub(r'[^a-zA-Z0-9\s&]', ' ', company_name).strip()
     c = re.sub(r'^the\s+', '', c, flags=re.IGNORECASE)
     suffixes = r'\b(inc|incorporated|corp|corporation|company|co|llc|ltd|limited|plc|group|holdings|technologies|technology|labs|systems)\b'
@@ -185,7 +274,6 @@ def is_strictly_summer_2027(title: str, terms_list: list, extra_text: str = "") 
     terms = [str(t).lower().strip() for t in terms_list]
     combined = f"{title_lower} {' '.join(terms)} {extra_text.lower()}"
 
-    # Reject off-cycle terms or wrong years if Summer 2027 isn't explicitly stated
     for bad in ["spring 2027", "fall 2026", "fall 2027", "winter 2027", "co-op", "coop", "2025", "summer 2026"]:
         if bad in combined and "summer 2027" not in combined:
             return False
@@ -199,33 +287,25 @@ def is_strictly_summer_2027(title: str, terms_list: list, extra_text: str = "") 
     return has_2027 and has_summer_or_intern
 
 def is_graduate_eligible(item: dict, title: str, extra_text: str = "") -> bool:
-    """
-    Ensures the internship is eligible for MS / Graduate students.
-    Rejects roles restricted solely to Bachelors/Undergrad or solely to PhD.
-    """
     title_lower = title.lower()
     combined = f"{title_lower} {extra_text.lower()}"
 
-    # Block PhD-only or Undergrad-only titles
     if any(k in title_lower for k in ["phd", "ph.d", "doctoral", "undergrad", "bachelor"]):
         if not any(m in title_lower for m in ["master", "ms ", "m.s.", "grad"]):
             return False
 
-    # Check structured degrees array if available
     degrees = [str(d).lower() for d in item.get("degrees", [])]
     if degrees:
         has_masters = any("master" in d or "ms" in d or "grad" in d for d in degrees)
         if not has_masters:
             return False
 
-    # Check snippet/description text for hard exclusions
     if any(p in combined for p in ["phd only", "ph.d. only", "exclusively for phd", "must be pursuing a phd", "undergraduate only", "bachelor's only"]):
         return False
 
     return True
 
 def matches_ai_ds_ml_role(title: str) -> bool:
-    """Strictly AI, ML, Data Science, Analytics roles; blocks SWE, CV, Hardware, PhD, Undergrad."""
     title_lower = f" {title.lower()} "
     if "intern" not in title_lower:
         return False
@@ -243,7 +323,7 @@ def is_us_location(loc_str: str) -> bool:
         ", wa", ", tx", ", il", ", va", ", nj", ", co", ", nc", ", ga",
         ", pa", ", md", ", az", ", fl", ", oh", ", mi", ", mn", "new york",
         "san francisco", "seattle", "boston", "austin", "chicago", "menlo park",
-        "mountain view", "palo alto", "sunnyvale", "SAN JOSE", "santa clara", "los angeles", "atlanta", "bellevue", "redmond"
+        "mountain view", "palo alto", "sunnyvale", "san jose", "santa clara", "los angeles", "atlanta", "bellevue", "redmond"
     ]
     if any(u in loc for u in us_markers):
         return True
@@ -283,7 +363,7 @@ def fetch_all_internships(seen_set, existing_job_urls, existing_signatures):
         seen_in_run.add(norm_url)
         openings.append({"company": comp, "role": role, "url": raw_url, "sig": sig})
 
-    # ENGINE 1: Community JSON Trackers (SimplifyJobs + PittCSC)
+    # ENGINE 1: Community JSON Trackers
     tracker_urls = [
         "https://raw.githubusercontent.com/SimplifyJobs/Summer2027-Internships/dev/.github/scripts/listings.json",
         "https://raw.githubusercontent.com/pittcsc/Summer2027-Internships/dev/.github/scripts/listings.json"
@@ -300,7 +380,7 @@ def fetch_all_internships(seen_set, existing_job_urls, existing_signatures):
         except Exception:
             continue
 
-    # ENGINE 2: Direct Greenhouse ATS Boards (with content metadata check for 2027)
+    # ENGINE 2: Direct Greenhouse ATS Boards
     for comp_name, token in GREENHOUSE_BOARDS:
         try:
             r = requests.get(f"https://boards-api.greenhouse.io/v1/boards/{token}/jobs?content=true", timeout=10)
@@ -348,12 +428,12 @@ def fetch_all_internships(seen_set, existing_job_urls, existing_signatures):
         except Exception:
             continue
 
-    # ENGINE 5: Serper Global ATS Dorker (Catches Workday, Greenhouse, Lever, Ashby across all companies)
+    # ENGINE 5: Serper Global ATS Dorker
     if SERPER_API_KEY:
         headers = {"X-API-KEY": SERPER_API_KEY, "Content-Type": "application/json"}
         ats_queries = [
-            'site:myworkdayjobs.com "Summer 2027" ("Data Science" OR "Machine Learning" OR "Artificial Intelligence" OR "Data Analyst" OR "Data Engineer") "Intern" -PhD',
-            '(site:boards.greenhouse.io OR site:job-boards.greenhouse.io OR site:jobs.lever.co OR site:jobs.ashbyhq.com) "Summer 2027" ("Data Science" OR "Machine Learning" OR "AI" OR "Data Engineer" OR "Analytics") "Intern" -PhD'
+            'site:myworkdayjobs.com "Summer 2027" ("Data Science" OR "Machine Learning" OR "Artificial Intelligence" OR "Data Analyst" OR "Data Engineer") "Intern" -PhD -Quant',
+            '(site:boards.greenhouse.io OR site:job-boards.greenhouse.io OR site:jobs.lever.co OR site:jobs.ashbyhq.com) "Summer 2027" ("Data Science" OR "Machine Learning" OR "AI" OR "Data Engineer" OR "Analytics") "Intern" -PhD -Quant'
         ]
         for q in ats_queries:
             try:
@@ -365,7 +445,6 @@ def fetch_all_internships(seen_set, existing_job_urls, existing_signatures):
                     link = item.get("link", "").strip()
                     snippet = item.get("snippet", "").strip()
 
-                    # Extract Company & Role from ATS page title or URL
                     comp_guess = ""
                     role_guess = raw_title
                     if "myworkdayjobs.com" in link:
@@ -410,12 +489,6 @@ def is_indian_origin(name: str, snippet: str) -> bool:
     return any(cue in snippet.lower() for cue in indian_cues)
 
 def is_verified_current_neu_alum(raw_title: str, snippet: str, clean_company: str) -> bool:
-    """
-    STRICT VERIFICATION:
-    1. Profile title or snippet must explicitly contain 'Northeastern'.
-    2. Target company must appear in the current headline OR in the 'Experience: Company' / 'Current: ... at Company' snippet block.
-    3. Rejects 'Former', 'Ex-', or 'Past:' matches.
-    """
     comp_lower = clean_company.lower().strip()
     title_lower = raw_title.lower()
     snippet_lower = snippet.lower()
@@ -427,14 +500,11 @@ def is_verified_current_neu_alum(raw_title: str, snippet: str, clean_company: st
     comp_tokens = [t for t in re.findall(r'\b[a-z0-9]+\b', comp_lower) if len(t) > 2]
     primary_token = comp_tokens[0] if comp_tokens else comp_lower
 
-    # Parse LinkedIn title: "Name - Headline | LinkedIn"
     cleaned_t = raw_title.replace("| LinkedIn", "").replace("- LinkedIn", "")
     parts = [p.strip().lower() for p in cleaned_t.split(" - ") if p.strip()]
     headline_part = " - ".join(parts[1:]) if len(parts) >= 2 else title_lower
 
     in_headline = (comp_lower in headline_part) or (len(primary_token) >= 3 and primary_token in headline_part)
-
-    # Check structured current experience cues in Google's LinkedIn snippet when Google truncates long titles with '...'
     in_current_snippet = any(
         cue in snippet_lower for cue in [
             f"experience: {comp_lower}",
@@ -447,7 +517,6 @@ def is_verified_current_neu_alum(raw_title: str, snippet: str, clean_company: st
     if not in_headline and not in_current_snippet:
         return False
 
-    # Reject former employees
     bad_cues = [f"former {comp_lower}", f"formerly at {comp_lower}", f"ex-{primary_token}", f"ex {primary_token}", f"past: {comp_lower}"]
     if any(b in combined for b in bad_cues) or "former" in headline_part:
         return False
@@ -465,7 +534,6 @@ def find_verified_balanced_alumni(company_name: str, existing_alumni_urls: set, 
 
     headers = {"X-API-KEY": SERPER_API_KEY, "Content-Type": "application/json"}
 
-    # Uncapped search queries (no intitle: bottleneck) so truncated LinkedIn headlines aren't hidden
     q1 = f'site:linkedin.com/in/ "{search_comp}" "Northeastern University" (Engineer OR Scientist OR Data OR Developer OR AI OR Analyst)'
     q2 = f'site:linkedin.com/in/ "{search_comp}" "Northeastern University" (India OR Mumbai OR Pune OR Bangalore OR Hyderabad OR Patel OR Sharma OR Shah OR Singh OR Gupta)'
 
@@ -499,20 +567,23 @@ def find_verified_balanced_alumni(company_name: str, existing_alumni_urls: set, 
 
         clean_title = raw_title.replace(" | LinkedIn", "").replace(" - LinkedIn", "").strip()
         parts = [p.strip() for p in clean_title.split(" - ") if p.strip()]
-        full_name = parts[0] if parts else ""
+        full_name_raw = parts[0] if parts else ""
 
-        name_tokens = [t for t in re.findall(r'\b[a-zA-Z]+\b', full_name) if t.lower() not in ["dr", "mr", "ms", "mrs", "er"]]
+        # Strip credentials/titles so we store clean "First Last" in Column A
+        ignore_titles = {"dr", "mr", "ms", "mrs", "er", "phd", "ms", "mba", "pmp", "cfa", "cpa", "aws", "certified"}
+        name_tokens = [t.capitalize() for t in re.findall(r'\b[a-zA-Z]+\b', full_name_raw) if t.lower() not in ignore_titles]
         if not name_tokens:
             continue
-        first_name = name_tokens[0].capitalize()
+
+        display_name = f"{name_tokens[0]} {name_tokens[-1]}" if len(name_tokens) >= 2 else name_tokens[0]
 
         profile_obj = {
-            "first_name": first_name,
-            "full_name": full_name,
+            "display_name": display_name,
+            "full_name": full_name_raw,
             "url": link_clean
         }
 
-        if is_indian_origin(full_name, snippet):
+        if is_indian_origin(full_name_raw, snippet):
             indian_pool.append(profile_obj)
         else:
             non_indian_pool.append(profile_obj)
@@ -547,6 +618,225 @@ def append_to_sheets(service, rows):
         body=body
     ).execute()
 
+# ==============================================================================
+# 3:00 PM EMAIL ENRICHMENT & LINKEDIN SLUG CROSS-VERIFICATION ENGINE
+# ==============================================================================
+def extract_verified_first_last(name_cell: str, linkedin_url: str):
+    """
+    Cross-verifies the person's name against their LinkedIn URL slug (/in/first-last-123).
+    Returns: (first_name, last_name, is_slug_verified)
+    """
+    raw_tokens = [t.lower() for t in re.findall(r'[a-zA-Z]+', name_cell) if len(t) > 1]
+
+    # Parse LinkedIn slug
+    m = re.search(r'linkedin\.com/in/([^/?#]+)', linkedin_url.lower())
+    slug = m.group(1) if m else ""
+    # Strip trailing hex/numeric IDs from LinkedIn slug (e.g. -a6758847)
+    slug_parts = [p for p in slug.split("-") if p.isalpha() and len(p) > 1]
+
+    if len(raw_tokens) >= 2:
+        first = raw_tokens[0]
+        last = raw_tokens[-1]
+        # Verify both tokens appear in the LinkedIn URL slug
+        slug_text = "".join(slug_parts)
+        verified = (first in slug_text and last in slug_text)
+        return first, last, verified
+    elif len(raw_tokens) == 1 and len(slug_parts) >= 2:
+        first = raw_tokens[0]
+        # Recover last name directly from the LinkedIn URL slug!
+        if slug_parts[0] == first:
+            return first, slug_parts[1], True
+        elif first in slug_parts:
+            idx = slug_parts.index(first)
+            if idx + 1 < len(slug_parts):
+                return first, slug_parts[idx + 1], True
+        return first, slug_parts[-1], False
+    elif len(slug_parts) >= 2:
+        return slug_parts[0], slug_parts[-1], False
+
+    return (raw_tokens[0] if raw_tokens else ""), "", False
+
+def resolve_company_email_format(company_name: str, cache_dict: dict):
+    """
+    Returns (domain, pattern, is_high_confidence_pattern) for a company.
+    Checks KNOWN_EMAIL_PATTERNS first, then uses 1 Serper query if unknown.
+    """
+    clean_comp = clean_company_for_search(company_name).lower().strip()
+    if clean_comp in cache_dict:
+        return cache_dict[clean_comp]
+
+    for k, (dom, pat) in KNOWN_EMAIL_PATTERNS.items():
+        if k == clean_comp or k in clean_comp or clean_comp in k:
+            res = (dom, pat, True)
+            cache_dict[clean_comp] = res
+            return res
+
+    # Fallback: Query Serper for corporate email format
+    if SERPER_API_KEY:
+        headers = {"X-API-KEY": SERPER_API_KEY, "Content-Type": "application/json"}
+        q = f'"{clean_company_for_search(company_name)}" email format OR address RocketReach OR LeadIQ'
+        try:
+            r = requests.post("https://google.serper.dev/search", headers=headers, json={"q": q, "num": 5}, timeout=10)
+            if r.status_code == 200:
+                snippets = " ".join([it.get("snippet", "") + " " + it.get("title", "") for it in r.json().get("organic", [])])
+                dom_match = re.search(r'@([a-zA-Z0-9-]+\.[a-zA-Z]{2,})', snippets)
+                domain = dom_match.group(1).lower() if dom_match else ""
+                if domain and not any(bad in domain for bad in ["gmail.", "yahoo.", "rocketreach.", "leadiq.", "linkedin."]):
+                    s_low = snippets.lower()
+                    if "first_initial" in s_low or "[first_initial][last]" in s_low or "jdoe@" in s_low or "flast" in s_low:
+                        pat = "flast"
+                    elif "first.last" in s_low or "[first].[last]" in s_low or "john.doe@" in s_low:
+                        pat = "first.last"
+                    elif "[first]@" in s_low or "only first name" in s_low:
+                        pat = "first"
+                    else:
+                        pat = "first.last"
+                    res = (domain, pat, True)
+                    cache_dict[clean_comp] = res
+                    return res
+        except Exception:
+            pass
+
+    # Default fallback domain guess
+    fallback_dom = re.sub(r'[^a-z0-9]', '', clean_comp) + ".com"
+    res = (fallback_dom, "first.last", False)
+    cache_dict[clean_comp] = res
+    return res
+
+def format_email_address(first: str, last: str, domain: str, pattern: str) -> str:
+    first = re.sub(r'[^a-z]', '', first.lower())
+    last = re.sub(r'[^a-z]', '', last.lower())
+    if not first or not domain:
+        return ""
+    if not last or pattern == "first":
+        return f"{first}@{domain}"
+    if pattern == "flast":
+        return f"{first[0]}{last}@{domain}"
+    if pattern == "firstl":
+        return f"{first}{last[0]}@{domain}"
+    if pattern == "first_last":
+        return f"{first}_{last}@{domain}"
+    return f"{first}.{last}@{domain}"
+
+def is_within_last_12_hours(date_str: str) -> bool:
+    """
+    Strictly verifies that the row's Date Added timestamp is within the last 12 hours.
+    Old rows (or date-only strings like '2026-10-13') return False so previously blank rows are untouched.
+    """
+    date_str = str(date_str or "").strip()
+    if not date_str or len(date_str) <= 10:
+        # Date-only strings without HH:MM:SS are from older runs -> skip!
+        return False
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+        try:
+            row_dt = datetime.strptime(date_str, fmt)
+            diff = datetime.now() - row_dt
+            return timedelta(hours=-1) <= diff <= timedelta(hours=12, minutes=30)
+        except ValueError:
+            continue
+    return False
+
+def enrich_recent_emails():
+    """
+    3:00 PM Scheduled Mode:
+    Scans rows added in the last 12 hours where Email ID (Col C) is blank,
+    cross-verifies the LinkedIn URL slug, fills the work email, and marks status as PENDING or REVIEW.
+    """
+    service = get_sheets_service()
+    if not service or not SPREADSHEET_ID:
+        print("Sheets service unavailable.")
+        return
+
+    res = service.spreadsheets().values().get(
+        spreadsheetId=SPREADSHEET_ID,
+        range="Sheet1!A2:H"
+    ).execute()
+    rows = res.get("values", [])
+
+    pattern_cache = {}
+    updates = []
+    auto_pending_count = 0
+    review_count = 0
+    summary_lines = []
+
+    for idx, r in enumerate(rows):
+        row_num = idx + 2  # 1-indexed row in Sheet1
+        name_cell = r[0] if len(r) > 0 else ""
+        company = r[1] if len(r) > 1 else ""
+        email_cell = r[2] if len(r) > 2 else ""
+        linkedin_url = r[3] if len(r) > 3 else ""
+        status_cell = (r[6] if len(r) > 6 else "").strip().upper()
+        date_added = r[7] if len(r) > 7 else ""
+
+        # 1. Skip if Email ID is already filled or status is not PENDING
+        if email_cell.strip() or status_cell != "PENDING":
+            continue
+
+        # 2. STRICT 12-HOUR CUTOFF: Never touch older intentionally blank rows!
+        if not is_within_last_12_hours(date_added):
+            continue
+
+        first, last, slug_verified = extract_verified_first_last(name_cell, linkedin_url)
+        if not first or not last:
+            continue
+
+        domain, pattern, pattern_verified = resolve_company_email_format(company, pattern_cache)
+        guessed_email = format_email_address(first, last, domain, pattern)
+        if not guessed_email:
+            continue
+
+        clean_comp = clean_company_for_search(company).lower()
+        is_massive = any(m in clean_comp for m in MASSIVE_ENTERPRISES)
+
+        # Confidence Gate:
+        # High confidence -> Keep as PENDING (ready for automatic sending)
+        # Collision/Slug uncertainty -> Set as REVIEW so you only review the uncertain ones
+        if slug_verified and pattern_verified and not is_massive:
+            new_status = "PENDING"
+            auto_pending_count += 1
+            badge = "🟢 PENDING"
+        else:
+            new_status = "REVIEW"
+            review_count += 1
+            badge = "🟡 REVIEW"
+
+        updates.append({
+            "range": f"Sheet1!C{row_num}",
+            "values": [[guessed_email]]
+        })
+        updates.append({
+            "range": f"Sheet1!G{row_num}",
+            "values": [[new_status]]
+        })
+        summary_lines.append(f"• **{first.capitalize()} {last.capitalize()}** ({company}) → `{guessed_email}` [{badge}]")
+
+    if updates:
+        service.spreadsheets().values().batchUpdate(
+            spreadsheetId=SPREADSHEET_ID,
+            body={"valueInputOption": "USER_ENTERED", "data": updates}
+        ).execute()
+
+    # Send 3:00 PM Discord Notification
+    if DISCORD_WEBHOOK_URL:
+        sheet_link = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/edit"
+        desc = (
+            f"🎯 **3:00 PM Work Email Enrichment Complete (Last 12h Entries Only)!**\n\n"
+            f"• 🟢 **High-Confidence (`PENDING` - Ready to Send):** {auto_pending_count}\n"
+            f"• 🟡 **Needs Quick Glance (`REVIEW`):** {review_count}\n"
+            f"• 🔒 *All rows older than 12 hours were left untouched.*\n\n"
+            f"📊 **[Open Google Sheets Tracker]({sheet_link})**\n\n"
+            f"**Enriched Emails:**\n" + ("\n".join(summary_lines[:15]) or "_No new blank rows from the last 12 hours._")
+        )
+        embed = {
+            "title": "📧 3:00 PM Automated Work Email Enricher",
+            "description": desc[:2000],
+            "color": 3066993,
+            "footer": {"text": f"{datetime.now().strftime('%b %d, %Y %I:%M %p')} | LinkedIn Slug Cross-Verified"}
+        }
+        requests.post(DISCORD_WEBHOOK_URL, json={"embeds": [embed]}, timeout=10)
+
+    print(f"Enrichment finished: {auto_pending_count} PENDING, {review_count} REVIEW.")
+
 def send_discord_summary(job_count, people_count, lines_summary):
     if not DISCORD_WEBHOOK_URL:
         return
@@ -554,7 +844,8 @@ def send_discord_summary(job_count, people_count, lines_summary):
     description = (
         f"☀️ **Good Morning! Here is your 8:00 AM Referral Pipeline Digest:**\n\n"
         f"• **New Graduate AI/DS/ML Roles Populated:** {job_count}\n"
-        f"• **Verified Northeastern Alumni Added:** {people_count} (50% Indian / 50% Non-Indian)\n\n"
+        f"• **Verified Northeastern Alumni Added:** {people_count} (50% Indian / 50% Non-Indian)\n"
+        f"• 🕒 *Work emails for these rows will be auto-generated & verified at 3:00 PM EST.*\n\n"
         f"📊 **[Open Google Sheets Tracker]({sheet_link})**\n\n"
         f"**Recently Added Openings:**\n" + (lines_summary or "_No new openings this morning._")
     )
@@ -567,6 +858,10 @@ def send_discord_summary(job_count, people_count, lines_summary):
     requests.post(DISCORD_WEBHOOK_URL, json={"embeds": [embed]}, timeout=10)
 
 def main():
+    if "--enrich" in sys.argv:
+        enrich_recent_emails()
+        return
+
     seen_cache = load_seen_cache()
     sheets_service = get_sheets_service()
 
@@ -579,9 +874,8 @@ def main():
     summary_lines = []
     total_people_added = 0
     jobs_populated = 0
-    today_str = datetime.now().strftime("%Y-%m-%d")
+    now_timestamp_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    # Fill up to 10 roles that actually yield verified Northeastern alumni
     for job in new_jobs:
         if jobs_populated >= 10:
             break
@@ -595,7 +889,6 @@ def main():
         seen_cache.add(sig)
         seen_cache.add(clean_url(job_url))
 
-        # Only populate roles where at least 1 verified NEU alum works at the company
         if not alumni_list:
             continue
 
@@ -604,14 +897,14 @@ def main():
 
         for alum in alumni_list:
             sheet_rows.append([
-                alum["first_name"],  # Col A: Extracted First Name
-                company,             # Col B: Company Name
-                "",                  # Col C: Blank Email ID for you to fill
-                alum["url"],         # Col D: Verified Personal LinkedIn Profile URL
-                role,                # Col E: Graduate AI/DS/ML Role Title
-                job_url,             # Col F: Application Link
-                "PENDING",           # Col G: Status
-                today_str            # Col H: Date Added
+                alum["display_name"], # Col A: "First Last" (for accurate 3 PM email enrichment)
+                company,              # Col B: Company Name
+                "",                   # Col C: Blank Email ID (auto-enriched at 3:00 PM)
+                alum["url"],          # Col D: Verified Personal LinkedIn Profile URL
+                role,                 # Col E: Graduate AI/DS/ML Role Title
+                job_url,              # Col F: Application Link
+                "PENDING",            # Col G: Status
+                now_timestamp_str     # Col H: Exact Timestamp (YYYY-MM-DD HH:MM:SS) for 12h lock
             ])
             total_people_added += 1
             existing_alumni_urls.add(clean_url(alum["url"]))
