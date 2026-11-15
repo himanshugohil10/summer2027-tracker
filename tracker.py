@@ -623,39 +623,63 @@ def append_to_sheets(service, rows):
 # ==============================================================================
 def extract_verified_first_last(name_cell: str, linkedin_url: str):
     """
-    Cross-verifies the person's name against their LinkedIn URL slug (/in/first-last-123).
+    Cross-verifies the person's name against their LinkedIn URL slug.
+    Handles hyphenated slugs ('kevin-barga'), concatenated slugs ('scarlettmasca'),
+    reversed slugs ('veerameet'), numbers ('greglewis321'), and single-letter initials ('lindsey-s').
     Returns: (first_name, last_name, is_slug_verified)
     """
-    raw_tokens = [t.lower() for t in re.findall(r'[a-zA-Z]+', name_cell) if len(t) > 1]
+    raw_tokens = [t.lower() for t in re.findall(r'[a-zA-Z]+', str(name_cell))]
+    first_from_cell = raw_tokens[0] if raw_tokens else ""
 
-    # Parse LinkedIn slug
-    m = re.search(r'linkedin\.com/in/([^/?#]+)', linkedin_url.lower())
-    slug = m.group(1) if m else ""
-    # Strip trailing hex/numeric IDs from LinkedIn slug (e.g. -a6758847)
-    slug_parts = [p for p in slug.split("-") if p.isalpha() and len(p) > 1]
-
+    # 1. If Column A already has "First Last" (standard for all new 8:00 AM runs)
     if len(raw_tokens) >= 2:
-        first = raw_tokens[0]
-        last = raw_tokens[-1]
-        # Verify both tokens appear in the LinkedIn URL slug
-        slug_text = "".join(slug_parts)
-        verified = (first in slug_text and last in slug_text)
+        first, last = raw_tokens[0], raw_tokens[-1]
+        m = re.search(r'linkedin\.com/in/([^/?#]+)', str(linkedin_url).lower())
+        slug_clean = re.sub(r'[^a-z]', '', m.group(1)) if m else ""
+        verified = (first in slug_clean and last in slug_clean and len(last) > 1)
         return first, last, verified
-    elif len(raw_tokens) == 1 and len(slug_parts) >= 2:
-        first = raw_tokens[0]
-        # Recover last name directly from the LinkedIn URL slug!
-        if slug_parts[0] == first:
-            return first, slug_parts[1], True
-        elif first in slug_parts:
-            idx = slug_parts.index(first)
-            if idx + 1 < len(slug_parts):
-                return first, slug_parts[idx + 1], True
-        return first, slug_parts[-1], False
-    elif len(slug_parts) >= 2:
-        return slug_parts[0], slug_parts[-1], False
 
-    return (raw_tokens[0] if raw_tokens else ""), "", False
+    # 2. If Column A only has First Name, extract Last Name from LinkedIn slug
+    m = re.search(r'linkedin\.com/in/([^/?#]+)', str(linkedin_url).lower())
+    if not m or not first_from_cell:
+        return first_from_cell, "", False
 
+    slug = m.group(1)
+    # Strip trailing LinkedIn random hex IDs (e.g., -83b696189 or -2a604270)
+    slug = re.sub(r'-[0-9a-f]{6,}$', '', slug)
+    # Split by hyphens and strip trailing digits from each part (so 'wong18' -> 'wong', 'greglewis321' -> 'greglewis')
+    raw_parts = [re.sub(r'\d+$', '', p) for p in slug.split('-')]
+    alpha_parts = [re.sub(r'[^a-z]', '', p) for p in raw_parts if re.sub(r'[^a-z]', '', p)]
+
+    first = first_from_cell
+
+    # Case A: Multi-part hyphenated slug (e.g., 'nicholas-wong18', 'lindsey-s')
+    if len(alpha_parts) >= 2:
+        if alpha_parts[0] == first or alpha_parts[0].startswith(first) or first.startswith(alpha_parts[0]):
+            last = alpha_parts[-1]
+            return first, last, (len(last) > 1)
+        elif alpha_parts[-1] == first:
+            last = alpha_parts[0]
+            return first, last, (len(last) > 1)
+        else:
+            return first, alpha_parts[-1], False
+
+    # Case B: Single concatenated slug without hyphens (e.g., 'scarlettmasca', 'greglewis321', 'veerameet')
+    if len(alpha_parts) == 1:
+        single = alpha_parts[0]
+        if single.startswith(first) and len(single) > len(first):
+            last = single[len(first):]
+            return first, last, (len(last) >= 2)
+        elif single.endswith(first) and len(single) > len(first):
+            last = single[:-len(first)]
+            return first, last, (len(last) >= 2)
+        elif single.startswith(first[0]) and len(single) > 3:
+            last = single[1:]
+            return first, last, False
+        else:
+            return first, single, False
+
+    return first, "", False
 def resolve_company_email_format(company_name: str, cache_dict: dict):
     """
     Returns (domain, pattern, is_high_confidence_pattern) for a company.
