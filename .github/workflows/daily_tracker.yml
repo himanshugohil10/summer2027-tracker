@@ -2,21 +2,28 @@ name: Daily Summer 2027 Internship & Alumni Tracker
 
 on:
   schedule:
-    # 8:00 AM EDT (12:00 UTC) every single day
-    - cron: '17 08 * * *'
+    # 8:00 AM EST (13:00 UTC) - Discover Internships & NEU Alumni
+    - cron: '0 13 * * *'
+    # 3:00 PM EST (20:00 UTC) - Enrich Work Emails for Last 12h Entries
+    - cron: '0 20 * * *'
   workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Select mode: "discover" (8 AM job/alumni search) or "enrich" (3 PM email filler)'
+        required: true
+        default: 'discover'
+
+permissions:
+  contents: write
 
 jobs:
-  track-jobs:
+  track-and-enrich:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-
     steps:
-      - name: Checkout Code
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Setup Python
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
@@ -24,17 +31,24 @@ jobs:
       - name: Install Dependencies
         run: pip install requests google-api-python-client google-auth
 
-      - name: Run Pipeline
+      - name: Run Tracker or Email Enricher
         env:
+          TZ: 'America/New_York'
           SERPER_API_KEY: ${{ secrets.SERPER_API_KEY }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
-        run: python tracker.py
+        run: |
+          if [ "${{ github.event.schedule }}" = "0 20 * * *" ] || [ "${{ github.event.inputs.mode }}" = "enrich" ]; then
+            python tracker.py --enrich
+          else
+            python tracker.py
+          fi
 
       - name: Commit Updated Seen Jobs Cache
         run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.email "actions@github.com"
+          git config --local user.name "GitHub Actions"
           git add seen_jobs.json
-          git diff --quiet && git diff --staged --quiet || (git commit -m "chore: update seen_jobs cache [skip ci]" && git push)
+          git diff --staged --quiet || git commit -m "Auto-update seen_jobs.json"
+          git push
