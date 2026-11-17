@@ -840,47 +840,52 @@ def enrich_recent_emails():
             body={"valueInputOption": "USER_ENTERED", "data": updates}
         ).execute()
 
-    # Send 3:00 PM Discord Notification
+    # Send 3:00 PM Discord Notification# Send 3:00 PM Discord Notification (Safe line limit so Discord never rejects it)
     if DISCORD_WEBHOOK_URL:
         sheet_link = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/edit"
+        preview = "\n".join(summary_lines[:10])
+        if len(summary_lines) > 10:
+            preview += f"\n_...and {len(summary_lines) - 10} more enriched rows on the sheet._"
         desc = (
             f"🎯 **3:00 PM Work Email Enrichment Complete (Last 12h Entries Only)!**\n\n"
             f"• 🟢 **High-Confidence (`PENDING` - Ready to Send):** {auto_pending_count}\n"
             f"• 🟡 **Needs Quick Glance (`REVIEW`):** {review_count}\n"
             f"• 🔒 *All rows older than 12 hours were left untouched.*\n\n"
             f"📊 **[Open Google Sheets Tracker]({sheet_link})**\n\n"
-            f"**Enriched Emails:**\n" + ("\n".join(summary_lines[:15]) or "_No new blank rows from the last 12 hours._")
+            f"**Enriched Emails:**\n" + (preview or "_No new blank rows from the last 12 hours._")
         )
         embed = {
             "title": "📧 3:00 PM Automated Work Email Enricher",
-            "description": desc[:2000],
+            "description": desc[:3800],
             "color": 3066993,
             "footer": {"text": f"{datetime.now().strftime('%b %d, %Y %I:%M %p')} | LinkedIn Slug Cross-Verified"}
         }
-        requests.post(DISCORD_WEBHOOK_URL, json={"embeds": [embed]}, timeout=10)
-
-    print(f"Enrichment finished: {auto_pending_count} PENDING, {review_count} REVIEW.")
+        r = requests.post(DISCORD_WEBHOOK_URL, json={"embeds": [embed]}, timeout=10)
+        print(f"Discord Enrich Webhook Status: {r.status_code}")
 
 def send_discord_summary(job_count, people_count, lines_summary):
     if not DISCORD_WEBHOOK_URL:
+        print("Warning: DISCORD_WEBHOOK_URL secret is empty!")
         return
     sheet_link = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/edit"
+    # Keep summary lines clean so long Workday URLs never break Discord's 4096-char embed limit
+    safe_lines = "\n".join(lines_summary.split("\n")[:8])
     description = (
         f"☀️ **Good Morning! Here is your 8:00 AM Referral Pipeline Digest:**\n\n"
         f"• **New Graduate AI/DS/ML Roles Populated:** {job_count}\n"
         f"• **Verified Northeastern Alumni Added:** {people_count} (50% Indian / 50% Non-Indian)\n"
         f"• 🕒 *Work emails for these rows will be auto-generated & verified at 3:00 PM EST.*\n\n"
         f"📊 **[Open Google Sheets Tracker]({sheet_link})**\n\n"
-        f"**Recently Added Openings:**\n" + (lines_summary or "_No new openings this morning._")
+        f"**Recently Added Openings:**\n" + (safe_lines or "_No new openings this morning._")
     )
     embed = {
         "title": "⚡ Daily Summer 2027 Referral Pipeline Update",
-        "description": description[:2000],
+        "description": description[:3800],
         "color": 13369344,
         "footer": {"text": f"{datetime.now().strftime('%b %d, %Y')} | 5-Engine ATS & Verified NEU Pipeline"}
     }
-    requests.post(DISCORD_WEBHOOK_URL, json={"embeds": [embed]}, timeout=10)
-
+    r = requests.post(DISCORD_WEBHOOK_URL, json={"embeds": [embed]}, timeout=10)
+    print(f"Discord Discovery Webhook Status: {r.status_code}")
 def main():
     if "--enrich" in sys.argv:
         enrich_recent_emails()
