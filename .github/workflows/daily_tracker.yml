@@ -2,36 +2,73 @@ name: Daily Summer 2027 Internship & Alumni Tracker
 
 on:
   schedule:
-    # 8:00 AM EST (13:00 UTC) - Discover Internships & NEU Alumni
-    - cron: '0 13 * * *'
-    # 3:00 PM EST (20:00 UTC) - Enrich Work Emails for Last 12h Entries
-    - cron: '0 20 * * *'
+    # Each job has TWO crons (EDT + EST). A gate step below checks real Boston
+    # time, so exactly one of each pair runs, all year, DST included.
+    # Discover target: 8:45 AM Boston
+    - cron: '45 12 * * *'   # 8:45 EDT (summer)
+    - cron: '45 13 * * *'   # 8:45 EST (winter)
+    # Enrich target: 3:00 PM Boston (minute :07 avoids GitHub's top-of-hour delays)
+    - cron: '7 19 * * *'    # 3:07 EDT
+    - cron: '7 20 * * *'    # 3:07 EST
   workflow_dispatch:
     inputs:
       mode:
-        description: 'Select mode: "discover" (8 AM job/alumni search) or "enrich" (3 PM email filler)'
+        description: 'discover (job/alumni search) or enrich (email filler)'
         required: true
         default: 'discover'
 
 permissions:
   contents: write
 
+# Never let two runs overlap (prevents git push conflicts and double Discord posts)
+concurrency:
+  group: tracker
+  cancel-in-progress: false
+
 jobs:
   track-and-enrich:
     runs-on: ubuntu-latest
     steps:
+      - name: Decide mode (Boston time gate)
+        id: gate
+        env:
+          EVENT: ${{ github.event_name }}
+          SCHEDULE: ${{ github.event.schedule }}
+          INPUT_MODE: ${{ github.event.inputs.mode }}
+        run: |
+          H=$(TZ=America/New_York date +%H)
+          M=$(TZ=America/New_York date +%M)
+          MINS=$((10#$H * 60 + 10#$M))
+          echo "Boston time now: $H:$M"
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            MODE="$INPUT_MODE"; RUN=true
+          else
+            case "$SCHEDULE" in
+              "45 12 * * *"|"45 13 * * *") MODE=discover; LO=520; HI=580 ;;  # 8:40-9:40
+              *)                           MODE=enrich;   LO=890; HI=950 ;;  # 14:50-15:50
+            esac
+            if [ "$MINS" -ge "$LO" ] && [ "$MINS" -lt "$HI" ]; then RUN=true; else RUN=false; fi
+          fi
+          echo "mode=$MODE" >> "$GITHUB_OUTPUT"
+          echo "run=$RUN" >> "$GITHUB_OUTPUT"
+          echo "mode=$MODE run=$RUN"
+
       - name: Checkout Repository
+        if: steps.gate.outputs.run == 'true'
         uses: actions/checkout@v4
 
       - name: Set up Python
+        if: steps.gate.outputs.run == 'true'
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
       - name: Install Dependencies
+        if: steps.gate.outputs.run == 'true'
         run: pip install requests google-api-python-client google-auth
 
       - name: Run Tracker or Email Enricher
+        if: steps.gate.outputs.run == 'true'
         env:
           TZ: 'America/New_York'
           SERPER_API_KEY: ${{ secrets.SERPER_API_KEY }}
@@ -39,16 +76,27 @@ jobs:
           SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
         run: |
-          if [ "${{ github.event.schedule }}" = "0 20 * * *" ] || [ "${{ github.event.inputs.mode }}" = "enrich" ]; then
+          if [ "${{ steps.gate.outputs.mode }}" = "enrich" ]; then
             python tracker.py --enrich
           else
             python tracker.py
           fi
 
       - name: Commit Updated Seen Jobs Cache
+        if: steps.gate.outputs.run == 'true' && steps.gate.outputs.mode == 'discover'
         run: |
           git config --local user.email "actions@github.com"
           git config --local user.name "GitHub Actions"
           git add seen_jobs.json
           git diff --staged --quiet || git commit -m "Auto-update seen_jobs.json"
+          git pull --rebase
           git push
+
+      - name: Alert Discord on failure
+        if: failure()
+        env:
+          WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          curl -s -H "Content-Type: application/json" \
+            -d "{\"content\": \"❌ Tracker workflow FAILED (${{ steps.gate.outputs.mode }}). Check GitHub Actions logs.\"}" \
+            "$WEBHOOK"
