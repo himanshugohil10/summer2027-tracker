@@ -2,14 +2,18 @@ name: Daily Summer 2027 Internship & Alumni Tracker
 
 on:
   schedule:
-    # Each job has TWO crons (EDT + EST). A gate step below checks real Boston
-    # time, so exactly one of each pair runs, all year, DST included.
-    # Discover target: 8:45 AM Boston
-    - cron: '45 12 * * *'   # 8:45 EDT (summer)
-    - cron: '45 13 * * *'   # 8:45 EST (winter)
-    # Enrich target: 3:00 PM Boston (minute :07 avoids GitHub's top-of-hour delays)
-    - cron: '7 19 * * *'    # 3:07 EDT
-    - cron: '7 20 * * *'    # 3:07 EST
+    # GitHub starts scheduled runs late (sometimes hours) and may drop some, so
+    # we trigger often and let scripts/gate.sh decide. It runs each mode at most
+    # once per Boston day, inside a catch-up window:
+    #   discover: 08:40-13:00 Boston   enrich: 14:50-21:00 Boston
+    # "On time" attempts (off-peak minutes, both EDT and EST variants):
+    - cron: '45 12 * * *'   # discover 8:45 EDT
+    - cron: '45 13 * * *'   # discover 8:45 EST
+    - cron: '7 19 * * *'    # enrich   3:07 EDT
+    - cron: '7 20 * * *'    # enrich   3:07 EST
+    # Catch-up attempts in case the ones above are delayed or dropped:
+    - cron: '25 14-17 * * *'   # 14:25-17:25 UTC (about 9:25 AM-1:25 PM Boston): discover retries
+    - cron: '25 21-23 * * *'   # 21:25-23:25 UTC (about 4:25-7:25 PM Boston): enrich retries
   workflow_dispatch:
     inputs:
       mode:
@@ -28,34 +32,17 @@ concurrency:
 jobs:
   track-and-enrich:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
-      - name: Decide mode (Boston time gate)
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Decide mode (Boston-time catch-up gate)
         id: gate
         env:
           EVENT: ${{ github.event_name }}
-          SCHEDULE: ${{ github.event.schedule }}
           INPUT_MODE: ${{ github.event.inputs.mode }}
-        run: |
-          H=$(TZ=America/New_York date +%H)
-          M=$(TZ=America/New_York date +%M)
-          MINS=$((10#$H * 60 + 10#$M))
-          echo "Boston time now: $H:$M"
-          if [ "$EVENT" = "workflow_dispatch" ]; then
-            MODE="$INPUT_MODE"; RUN=true
-          else
-            case "$SCHEDULE" in
-              "45 12 * * *"|"45 13 * * *") MODE=discover; LO=520; HI=580 ;;  # 8:40-9:40
-              *)                           MODE=enrich;   LO=890; HI=950 ;;  # 14:50-15:50
-            esac
-            if [ "$MINS" -ge "$LO" ] && [ "$MINS" -lt "$HI" ]; then RUN=true; else RUN=false; fi
-          fi
-          echo "mode=$MODE" >> "$GITHUB_OUTPUT"
-          echo "run=$RUN" >> "$GITHUB_OUTPUT"
-          echo "mode=$MODE run=$RUN"
-
-      - name: Checkout Repository
-        if: steps.gate.outputs.run == 'true'
-        uses: actions/checkout@v4
+        run: bash scripts/gate.sh decide
 
       - name: Set up Python
         if: steps.gate.outputs.run == 'true'
@@ -82,13 +69,20 @@ jobs:
             python tracker.py
           fi
 
-      - name: Commit Updated Seen Jobs Cache
-        if: steps.gate.outputs.run == 'true' && steps.gate.outputs.mode == 'discover'
+      - name: Record successful run and commit state
+        if: steps.gate.outputs.run == 'true'
+        env:
+          EVENT: ${{ github.event_name }}
         run: |
+          # Only scheduled runs set the once-per-day marker; manual runs don't block the schedule.
+          if [ "$EVENT" != "workflow_dispatch" ]; then
+            bash scripts/gate.sh mark "${{ steps.gate.outputs.mode }}" "${{ steps.gate.outputs.date }}"
+          fi
           git config --local user.email "actions@github.com"
           git config --local user.name "GitHub Actions"
           git add seen_jobs.json
-          git diff --staged --quiet || git commit -m "Auto-update seen_jobs.json"
+          [ -f run_state.json ] && git add run_state.json
+          git diff --staged --quiet || git commit -m "Auto-update tracker state (${{ steps.gate.outputs.mode }})"
           git pull --rebase
           git push
 
