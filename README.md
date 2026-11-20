@@ -8,10 +8,18 @@ It runs entirely on GitHub Actions, so there is no server to maintain.
 
 The workflow runs two jobs every day (Boston time):
 
-| Time (Boston) | Mode | What it does |
+| Target time | Mode | What it does |
 |---|---|---|
-| ~8:45 AM | `discover` | Finds new internships, finds alumni at each company, appends rows to the sheet, posts a Discord digest |
-| ~3:07 PM | `enrich` | Fills in guessed work emails for rows added in the last 12 hours and flags how confident each guess is |
+| ~9 AM | `discover` | Finds new internships, finds alumni at each company, appends rows to the sheet, posts a Discord digest |
+| ~3 PM | `enrich` | Fills in guessed work emails for rows added in the last 12 hours and flags how confident each guess is |
+
+**Scheduling.** GitHub Actions starts scheduled workflows late (sometimes hours) and occasionally drops them, so exact times can't be guaranteed. Instead, the workflow triggers several times a day and `scripts/gate.sh` decides what to do:
+
+- `discover` runs on the first trigger after ~8:40 AM that hasn't succeeded yet today.
+- `enrich` runs on the first trigger after ~2:50 PM, but only once `discover` has succeeded today.
+- Each mode runs at most once per Boston day. The date of the last success is stored in `run_state.json`, which the workflow commits.
+- Triggers that find nothing to do exit in a few seconds, so some "extra" short runs in the Actions tab are normal.
+- A manual run (Actions → Run workflow) always executes the mode you pick and doesn't affect the daily schedule.
 
 ### 1. Discover (`python tracker.py`)
 
@@ -111,8 +119,10 @@ Without the Sheets credentials the script still runs but skips the sheet read an
 .
 ├── tracker.py                       # discovery + enrichment logic
 ├── seen_jobs.json                   # dedupe cache (committed by the workflow)
+├── run_state.json                   # date of the last successful discover / enrich run
+├── scripts/gate.sh                  # decides whether and what to run at each trigger
 └── .github/workflows/
-    └── daily_tracker.yml            # schedule, Boston-time gate, run, commit cache, alert on failure
+    └── daily_tracker.yml            # triggers, gate, run, commit state, alert on failure
 ```
 
 ## Customizing

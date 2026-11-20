@@ -2,18 +2,18 @@ name: Daily Summer 2027 Internship & Alumni Tracker
 
 on:
   schedule:
-    # GitHub starts scheduled runs late (sometimes hours) and may drop some, so
-    # we trigger often and let scripts/gate.sh decide. It runs each mode at most
-    # once per Boston day, inside a catch-up window:
-    #   discover: 08:40-13:00 Boston   enrich: 14:50-21:00 Boston
-    # "On time" attempts (off-peak minutes, both EDT and EST variants):
-    - cron: '45 12 * * *'   # discover 8:45 EDT
-    - cron: '45 13 * * *'   # discover 8:45 EST
-    - cron: '7 19 * * *'    # enrich   3:07 EDT
-    - cron: '7 20 * * *'    # enrich   3:07 EST
-    # Catch-up attempts in case the ones above are delayed or dropped:
-    - cron: '25 14-17 * * *'   # 14:25-17:25 UTC (about 9:25 AM-1:25 PM Boston): discover retries
-    - cron: '25 21-23 * * *'   # 21:25-23:25 UTC (about 4:25-7:25 PM Boston): enrich retries
+    # GitHub starts scheduled runs late (sometimes hours) and drops some, so a
+    # few spread-out triggers are used and scripts/gate.sh decides what to do.
+    # Each mode runs at most once per Boston day: discover first (any time after
+    # ~8:40 AM), then enrich (after ~2:50 PM, once discover has succeeded).
+    # Extra triggers that find nothing to do exit in a few seconds.
+    # Times are UTC; Boston is UTC-5 (EST) or UTC-4 (EDT).
+    - cron: '45 13 * * *'   # ~8:45 AM  discover (first try)
+    - cron: '17 15 * * *'   # ~10:17 AM discover (retry)
+    - cron: '17 17 * * *'   # ~12:17 PM discover (retry)
+    - cron: '7 20 * * *'    # ~3:07 PM  enrich (first try)
+    - cron: '17 22 * * *'   # ~5:17 PM  enrich (retry)
+    - cron: '17 0 * * *'    # ~7:17 PM  last retry for either
   workflow_dispatch:
     inputs:
       mode:

@@ -2,11 +2,16 @@
 # Decides whether the tracker should run now, and in which mode.
 #
 # GitHub starts scheduled workflows late (often hours) and sometimes drops them,
-# so instead of a narrow time window this uses CATCH-UP windows plus a
+# so instead of a narrow time window this uses CATCH-UP rules plus a
 # once-per-day marker (run_state.json):
 #
-#   discover: any time 08:40-13:00 Boston, if it has not succeeded yet today
-#   enrich:   any time 14:50-21:00 Boston, if it has not succeeded yet today
+#   discover: first trigger after 08:40 Boston (until 20:00) that has not
+#             succeeded yet today
+#   enrich:   first trigger after 14:50 Boston (until 23:00), but ONLY once
+#             discover has succeeded today (it enriches the rows discover added)
+#
+# Each mode runs at most once per Boston day. If discover runs late, enrich
+# simply runs at the next trigger after it.
 #
 # Usage:
 #   gate.sh decide                     -> prints/exports mode, run, date
@@ -19,9 +24,9 @@ set -euo pipefail
 STATE_FILE="${STATE_FILE:-run_state.json}"
 
 DISCOVER_LO=520   # 08:40
-DISCOVER_HI=780   # 13:00
+DISCOVER_HI=1200  # 20:00
 ENRICH_LO=890     # 14:50
-ENRICH_HI=1260    # 21:00  (enrich only touches rows added in the last ~12h)
+ENRICH_HI=1380    # 23:00  (enrich only touches rows added in the last ~12h)
 
 get_state() {
   # prints the YYYY-MM-DD stored for key $1, or nothing
@@ -64,6 +69,7 @@ else
      && [ "$(get_state discover)" != "$D" ]; then
     MODE="discover"; RUN="true"
   elif [ "$MINS" -ge "$ENRICH_LO" ] && [ "$MINS" -lt "$ENRICH_HI" ] \
+     && [ "$(get_state discover)" = "$D" ] \
      && [ "$(get_state enrich)" != "$D" ]; then
     MODE="enrich"; RUN="true"
   fi
