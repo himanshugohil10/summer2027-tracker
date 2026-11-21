@@ -755,7 +755,7 @@ def is_within_last_12_hours(date_str: str) -> bool:
         try:
             row_dt = datetime.strptime(date_str, fmt)
             diff = datetime.now() - row_dt
-            return timedelta(hours=-1) <= diff <= timedelta(hours=12, minutes=30)
+            return timedelta(hours=-1) <= diff <= timedelta(hours=15)
         except ValueError:
             continue
     return False
@@ -847,15 +847,15 @@ def enrich_recent_emails():
         if len(summary_lines) > 10:
             preview += f"\n_...and {len(summary_lines) - 10} more enriched rows on the sheet._"
         desc = (
-            f"🎯 **3:00 PM Work Email Enrichment Complete (Last 12h Entries Only)!**\n\n"
+            f"🎯 **6:30 PM IST Work Email Enrichment Complete (Last 15h Entries Only)!**\n\n"
             f"• 🟢 **High-Confidence (`PENDING` - Ready to Send):** {auto_pending_count}\n"
             f"• 🟡 **Needs Quick Glance (`REVIEW`):** {review_count}\n"
-            f"• 🔒 *All rows older than 12 hours were left untouched.*\n\n"
+            f"• 🔒 *All rows older than 15 hours were left untouched.*\n\n"
             f"📊 **[Open Google Sheets Tracker]({sheet_link})**\n\n"
-            f"**Enriched Emails:**\n" + (preview or "_No new blank rows from the last 12 hours._")
+            f"**Enriched Emails:**\n" + (preview or "_No new blank rows from the last 15 hours._")
         )
         embed = {
-            "title": "📧 3:00 PM Automated Work Email Enricher",
+            "title": "📧 6:30 PM IST Automated Work Email Enricher",
             "description": desc[:3800],
             "color": 3066993,
             "footer": {"text": f"{datetime.now().strftime('%b %d, %Y %I:%M %p')} | LinkedIn Slug Cross-Verified"}
@@ -871,10 +871,10 @@ def send_discord_summary(job_count, people_count, lines_summary):
     # Keep summary lines clean so long Workday URLs never break Discord's 4096-char embed limit
     safe_lines = "\n".join(lines_summary.split("\n")[:8])
     description = (
-        f"☀️ **Good Morning! Here is your 8:00 AM Referral Pipeline Digest:**\n\n"
+        f"☀️ **Good Morning! Here is your 7:30 AM IST Referral Pipeline Digest:**\n\n"
         f"• **New Graduate AI/DS/ML Roles Populated:** {job_count}\n"
         f"• **Verified Northeastern Alumni Added:** {people_count} (50% Indian / 50% Non-Indian)\n"
-        f"• 🕒 *Work emails for these rows will be auto-generated & verified at 3:00 PM EST.*\n\n"
+        f"• 🕒 *Work emails for these rows will be auto-generated & verified at 6:30 PM IST.*\n\n"
         f"📊 **[Open Google Sheets Tracker]({sheet_link})**\n\n"
         f"**Recently Added Openings:**\n" + (safe_lines or "_No new openings this morning._")
     )
@@ -928,7 +928,7 @@ def main():
             sheet_rows.append([
                 alum["display_name"], # Col A: "First Last" (for accurate 3 PM email enrichment)
                 company,              # Col B: Company Name
-                "",                   # Col C: Blank Email ID (auto-enriched at 3:00 PM)
+                "",                   # Col C: Blank Email ID (auto-enriched at 6:30 PM IST)
                 alum["url"],          # Col D: Verified Personal LinkedIn Profile URL
                 role,                 # Col E: Graduate AI/DS/ML Role Title
                 job_url,              # Col F: Application Link

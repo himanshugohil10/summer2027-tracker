@@ -2,24 +2,27 @@ name: Daily Summer 2027 Internship & Alumni Tracker
 
 on:
   schedule:
-    # GitHub starts scheduled runs late (sometimes hours) and drops some, so a
-    # few spread-out triggers are used and scripts/gate.sh decides what to do.
-    # Each mode runs at most once per Boston day: discover first (any time after
-    # ~8:40 AM), then enrich (after ~2:50 PM, once discover has succeeded).
-    # Extra triggers that find nothing to do exit in a few seconds.
-    # Times are UTC; Boston is UTC-5 (EST) or UTC-4 (EDT).
-    - cron: '45 13 * * *'   # ~8:45 AM  discover (first try)
-    - cron: '17 15 * * *'   # ~10:17 AM discover (retry)
-    - cron: '17 17 * * *'   # ~12:17 PM discover (retry)
-    - cron: '7 20 * * *'    # ~3:07 PM  enrich (first try)
-    - cron: '17 22 * * *'   # ~5:17 PM  enrich (retry)
-    - cron: '17 0 * * *'    # ~7:17 PM  last retry for either
+    # BACKUP triggers only (GitHub drops/delays scheduled runs). The primary
+    # trigger is the Apps Script clock (see apps_script/), which calls
+    # workflow_dispatch at 7:30 AM / 6:30 PM IST. scripts/gate.sh makes sure each
+    # mode runs at most once per IST day, so duplicates exit in seconds.
+    # IST = UTC+5:30, no daylight saving, so these never shift.
+    - cron: '7 2 * * *'     # 7:37 AM IST  discover
+    - cron: '17 3 * * *'    # 8:47 AM IST  discover (retry)
+    - cron: '17 5 * * *'    # 10:47 AM IST discover (retry)
+    - cron: '7 13 * * *'    # 6:37 PM IST  enrich
+    - cron: '17 15 * * *'   # 8:47 PM IST  enrich (retry)
+    - cron: '17 17 * * *'   # 10:47 PM IST last retry
   workflow_dispatch:
     inputs:
       mode:
         description: 'discover (job/alumni search) or enrich (email filler)'
         required: true
         default: 'discover'
+      trigger:
+        description: 'auto = counts as the daily scheduled run (used by Apps Script); manual = always runs, ignores daily marker'
+        required: false
+        default: 'manual'
 
 permissions:
   contents: write
@@ -37,11 +40,12 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Decide mode (Boston-time catch-up gate)
+      - name: Decide mode (IST catch-up gate)
         id: gate
         env:
           EVENT: ${{ github.event_name }}
           INPUT_MODE: ${{ github.event.inputs.mode }}
+          INPUT_TRIGGER: ${{ github.event.inputs.trigger }}
         run: bash scripts/gate.sh decide
 
       - name: Set up Python
@@ -57,7 +61,7 @@ jobs:
       - name: Run Tracker or Email Enricher
         if: steps.gate.outputs.run == 'true'
         env:
-          TZ: 'America/New_York'
+          TZ: 'Asia/Kolkata'
           SERPER_API_KEY: ${{ secrets.SERPER_API_KEY }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
@@ -71,11 +75,9 @@ jobs:
 
       - name: Record successful run and commit state
         if: steps.gate.outputs.run == 'true'
-        env:
-          EVENT: ${{ github.event_name }}
         run: |
-          # Only scheduled runs set the once-per-day marker; manual runs don't block the schedule.
-          if [ "$EVENT" != "workflow_dispatch" ]; then
+          # Scheduled and trigger=auto runs set the once-per-day marker; manual runs don't.
+          if [ "${{ steps.gate.outputs.mark }}" = "true" ]; then
             bash scripts/gate.sh mark "${{ steps.gate.outputs.mode }}" "${{ steps.gate.outputs.date }}"
           fi
           git config --local user.email "actions@github.com"

@@ -5,12 +5,12 @@
 # so instead of a narrow time window this uses CATCH-UP rules plus a
 # once-per-day marker (run_state.json):
 #
-#   discover: first trigger after 08:40 Boston (until 20:00) that has not
+#   discover: first trigger after 08:40 IST (until 20:00) that has not
 #             succeeded yet today
-#   enrich:   first trigger after 14:50 Boston (until 23:00), but ONLY once
+#   enrich:   first trigger after 14:50 IST (until 23:00), but ONLY once
 #             discover has succeeded today (it enriches the rows discover added)
 #
-# Each mode runs at most once per Boston day. If discover runs late, enrich
+# Each mode runs at most once per IST day. If discover runs late, enrich
 # simply runs at the next trigger after it.
 #
 # Usage:
@@ -23,10 +23,11 @@ set -euo pipefail
 
 STATE_FILE="${STATE_FILE:-run_state.json}"
 
-DISCOVER_LO=520   # 08:40
-DISCOVER_HI=1200  # 20:00
-ENRICH_LO=890     # 14:50
-ENRICH_HI=1380    # 23:00  (enrich only touches rows added in the last ~12h)
+# All times are IST (Asia/Kolkata, no DST).
+DISCOVER_LO=435   # 07:15 (Apps Script 'near 7:30' can fire 07:15-07:45)
+DISCOVER_HI=1020  # 17:00
+ENRICH_LO=1095    # 18:15 (Apps Script 'near 18:30' can fire 18:15-18:45)
+ENRICH_HI=1380    # 23:00  (enrich only touches rows added in the last ~15h)
 
 get_state() {
   # prints the YYYY-MM-DD stored for key $1, or nothing
@@ -51,31 +52,39 @@ fi
 if [ -n "${FAKE_NOW:-}" ]; then
   D="${FAKE_NOW% *}"; T="${FAKE_NOW#* }"; H="${T%:*}"; M="${T#*:}"
 else
-  D="$(TZ=America/New_York date +%F)"
-  H="$(TZ=America/New_York date +%H)"
-  M="$(TZ=America/New_York date +%M)"
+  D="$(TZ=Asia/Kolkata date +%F)"
+  H="$(TZ=Asia/Kolkata date +%H)"
+  M="$(TZ=Asia/Kolkata date +%M)"
 fi
 MINS=$((10#$H * 60 + 10#$M))
-echo "Boston time now: $D $H:$M"
+echo "IST time now: $D $H:$M"
 
 EVENT="${EVENT:-schedule}"
-MODE="none"; RUN="false"
+MODE="none"; RUN="false"; MARK="false"
+TRIGGER="${INPUT_TRIGGER:-manual}"
 
-if [ "$EVENT" = "workflow_dispatch" ]; then
+if [ "$EVENT" = "workflow_dispatch" ] && [ "$TRIGGER" != "auto" ]; then
   # Manual runs always go through, in the mode you picked.
   MODE="${INPUT_MODE:-discover}"; RUN="true"
+elif [ "$EVENT" = "workflow_dispatch" ]; then
+  # Apps Script clock trigger: counts as the daily run, once per IST day.
+  MODE="${INPUT_MODE:-discover}"; MARK="true"
+  if [ "$(get_state "$MODE")" != "$D" ]; then
+    if [ "$MODE" = "discover" ] || [ "$(get_state discover)" = "$D" ]; then RUN="true"; fi
+  fi
 else
   if [ "$MINS" -ge "$DISCOVER_LO" ] && [ "$MINS" -lt "$DISCOVER_HI" ] \
      && [ "$(get_state discover)" != "$D" ]; then
-    MODE="discover"; RUN="true"
+    MODE="discover"; RUN="true"; MARK="true"
   elif [ "$MINS" -ge "$ENRICH_LO" ] && [ "$MINS" -lt "$ENRICH_HI" ] \
      && [ "$(get_state discover)" = "$D" ] \
      && [ "$(get_state enrich)" != "$D" ]; then
-    MODE="enrich"; RUN="true"
+    MODE="enrich"; RUN="true"; MARK="true"
   fi
 fi
 
 emit mode "$MODE"
 emit run "$RUN"
+emit mark "$MARK"
 emit date "$D"
 echo "Decision: mode=$MODE run=$RUN"
