@@ -6,20 +6,21 @@ It runs entirely on GitHub Actions, so there is no server to maintain.
 
 ## How it works
 
-The workflow runs two jobs every day (Boston time):
+The workflow runs two jobs every day. All timings are in **IST** (no daylight saving, so they never shift), chosen to land in the Boston morning and afternoon:
 
-| Target time | Mode | What it does |
-|---|---|---|
-| ~9 AM | `discover` | Finds new internships, finds alumni at each company, appends rows to the sheet, posts a Discord digest |
-| ~3 PM | `enrich` | Fills in guessed work emails for rows added in the last 12 hours and flags how confident each guess is |
+| Target time | Boston equivalent | Mode | What it does |
+|---|---|---|---|
+| ~7:30 PM IST | ~9 AM (10 AM in summer) | `discover` | Finds new internships, finds alumni at each company, appends rows to the sheet, posts a Discord digest |
+| ~1:30 AM IST | ~3 PM (4 PM in summer) | `enrich` | Fills in guessed work emails for rows added in the last 15 hours and flags how confident each guess is |
 
-**Scheduling.** GitHub Actions starts scheduled workflows late (sometimes hours) and occasionally drops them, so exact times can't be guaranteed. Instead, the workflow triggers several times a day and `scripts/gate.sh` decides what to do:
+**Scheduling.** GitHub Actions starts scheduled workflows late (sometimes hours) and occasionally drops them, so exact times can't be guaranteed. Instead, the workflow triggers several times and `scripts/gate.sh` decides what to do. Because enrich runs after midnight IST, a "cycle" rolls over at 12:00 noon IST rather than at midnight:
 
-- `discover` runs on the first trigger after ~8:40 AM that hasn't succeeded yet today.
-- `enrich` runs on the first trigger after ~2:50 PM, but only once `discover` has succeeded today.
-- Each mode runs at most once per Boston day. The date of the last success is stored in `run_state.json`, which the workflow commits.
-- Triggers that find nothing to do exit in a few seconds, so some "extra" short runs in the Actions tab are normal.
-- A manual run (Actions → Run workflow) always executes the mode you pick and doesn't affect the daily schedule.
+- `discover` runs on the first trigger between 7:00 PM and 12:30 AM IST that hasn't succeeded yet in the current cycle.
+- `enrich` runs on the first trigger between 1:00 AM and 6:00 AM IST, but only once `discover` has succeeded in the current cycle.
+- Each mode runs at most once per cycle. The cycle of the last success is stored in `run_state.json`, which the workflow commits.
+- Triggers that find nothing to do (including any fired at the wrong time of day) exit in a few seconds, so some "extra" short runs in the Actions tab are normal.
+- A manual run (Actions → Run workflow, `trigger` = `manual`) always executes the mode you pick and doesn't affect the schedule, so it is safe for testing.
+- An optional Google Apps Script clock can call the workflow at precise times with `trigger` = `auto` (19:30 IST for discover, 01:30 IST for enrich). Auto runs obey the same windows and once-per-cycle marker as the cron backups.
 
 ### 1. Discover (`python tracker.py`)
 

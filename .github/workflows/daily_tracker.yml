@@ -2,17 +2,20 @@ name: Daily Summer 2027 Internship & Alumni Tracker
 
 on:
   schedule:
-    # BACKUP triggers only (GitHub drops/delays scheduled runs). The primary
-    # trigger is the Apps Script clock (see apps_script/), which calls
-    # workflow_dispatch at 7:30 AM / 6:30 PM IST. scripts/gate.sh makes sure each
-    # mode runs at most once per IST day, so duplicates exit in seconds.
-    # IST = UTC+5:30, no daylight saving, so these never shift.
-    - cron: '7 2 * * *'     # 7:37 AM IST  discover
-    - cron: '17 3 * * *'    # 8:47 AM IST  discover (retry)
-    - cron: '17 5 * * *'    # 10:47 AM IST discover (retry)
-    - cron: '7 13 * * *'    # 6:37 PM IST  enrich
-    - cron: '17 15 * * *'   # 8:47 PM IST  enrich (retry)
-    - cron: '17 17 * * *'   # 10:47 PM IST last retry
+    # All timings are IST (UTC+5:30, no daylight saving, so nothing ever shifts).
+    # Goal: discover in the Boston morning (~7:30 PM IST) and enrich in the Boston
+    # afternoon (~1:30 AM IST), once each per cycle (a cycle rolls over at noon
+    # IST). scripts/gate.sh enforces the IST windows and the once-per-cycle
+    # marker, so any extra or mistimed trigger exits in seconds.
+    # GitHub cron is best-effort (often hours late), so the Apps Script clock is
+    # the punctual trigger (workflow_dispatch with trigger=auto at 19:30 IST for
+    # discover and 01:30 IST for enrich). These cron lines are backups (UTC).
+    - cron: '45 13 * * *'   # 7:15 PM IST discover
+    - cron: '17 15 * * *'   # 8:47 PM IST discover (retry)
+    - cron: '17 17 * * *'   # 10:47 PM IST discover (retry)
+    - cron: '7 20 * * *'    # 1:37 AM IST enrich
+    - cron: '17 22 * * *'   # 3:47 AM IST enrich (retry)
+    - cron: '17 0 * * *'    # 5:47 AM IST enrich (last retry)
   workflow_dispatch:
     inputs:
       mode:

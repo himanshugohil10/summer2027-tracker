@@ -1,33 +1,50 @@
 #!/usr/bin/env bash
 # Decides whether the tracker should run now, and in which mode.
 #
-# GitHub starts scheduled workflows late (often hours) and sometimes drops them,
-# so instead of a narrow time window this uses CATCH-UP rules plus a
-# once-per-day marker (run_state.json):
+# Everything is in IST (Asia/Kolkata, no daylight saving) so nothing ever shifts.
+# Goal: discover in the Boston MORNING, enrich in the Boston AFTERNOON:
 #
-#   discover: first trigger after 08:40 IST (until 20:00) that has not
-#             succeeded yet today
-#   enrich:   first trigger after 14:50 IST (until 23:00), but ONLY once
-#             discover has succeeded today (it enriches the rows discover added)
+#   discover  ~ 7:30 PM IST  (= about 9 AM Boston in winter, 10 AM in summer)
+#   enrich    ~ 1:30 AM IST  (= about 3 PM Boston in winter, 4 PM in summer)
 #
-# Each mode runs at most once per IST day. If discover runs late, enrich
-# simply runs at the next trigger after it.
+# Because enrich falls after midnight IST, a "day" here is a CYCLE that rolls over
+# at 12:00 noon IST, not at midnight. The cycle is named by the IST date it
+# starts on, and run_state.json stores the cycle each mode last succeeded in.
+#
+# GitHub starts scheduled workflows late and sometimes drops them, so each mode
+# has a catch-up window instead of one exact time. All triggers (the Apps Script
+# clock and the GitHub cron backups) follow the same rules:
+#
+#   discover: first trigger between 19:00 and 00:30 IST that has not succeeded
+#             yet in this cycle
+#   enrich:   first trigger between 01:00 and 06:00 IST, but ONLY once discover
+#             has succeeded in this cycle (it enriches the rows discover added)
+#
+# Anything outside those windows (for example an old trigger firing at the wrong
+# time of day) simply does nothing.
+#
+# Trigger types:
+#   schedule                          -> follows the windows above
+#   workflow_dispatch, trigger=auto   -> (Apps Script) same windows, and it only
+#                                        runs if the requested mode is the one due
+#   workflow_dispatch, trigger=manual -> always runs the chosen mode, never
+#                                        touches the cycle marker (safe for tests)
 #
 # Usage:
-#   gate.sh decide                     -> prints/exports mode, run, date
-#   gate.sh mark <mode> <YYYY-MM-DD>   -> records a successful run in run_state.json
+#   gate.sh decide                      -> prints/exports mode, run, mark, date
+#   gate.sh mark <mode> <cycle-date>    -> records a successful run in run_state.json
 #
-# Env: EVENT, INPUT_MODE (workflow_dispatch input), STATE_FILE, GITHUB_OUTPUT,
-#      FAKE_NOW="YYYY-MM-DD HH:MM" (testing only)
+# Env: EVENT, INPUT_MODE, INPUT_TRIGGER, STATE_FILE, GITHUB_OUTPUT,
+#      FAKE_NOW="YYYY-MM-DD HH:MM" (IST wall-clock, testing only)
 set -euo pipefail
 
 STATE_FILE="${STATE_FILE:-run_state.json}"
 
-# All times are IST (Asia/Kolkata, no DST).
-DISCOVER_LO=435   # 07:15 (Apps Script 'near 7:30' can fire 07:15-07:45)
-DISCOVER_HI=1020  # 17:00
-ENRICH_LO=1095    # 18:15 (Apps Script 'near 18:30' can fire 18:15-18:45)
-ENRICH_HI=1380    # 23:00  (enrich only touches rows added in the last ~15h)
+# Minutes since the cycle start (12:00 noon IST).
+DISCOVER_LO=420   # 19:00 IST
+DISCOVER_HI=750   # 00:30 IST
+ENRICH_LO=780     # 01:00 IST
+ENRICH_HI=1080    # 06:00 IST  (enrich only touches rows added in the last ~15h)
 
 get_state() {
   # prints the YYYY-MM-DD stored for key $1, or nothing
@@ -50,41 +67,46 @@ if [ "${1:-}" = "mark" ]; then
 fi
 
 if [ -n "${FAKE_NOW:-}" ]; then
-  D="${FAKE_NOW% *}"; T="${FAKE_NOW#* }"; H="${T%:*}"; M="${T#*:}"
+  T="${FAKE_NOW#* }"; H="${T%:*}"; M="${T#*:}"
+  CYCLE="$(TZ=UTC date -d "${FAKE_NOW}:00 UTC - 12 hours" +%F)"
 else
-  D="$(TZ=Asia/Kolkata date +%F)"
   H="$(TZ=Asia/Kolkata date +%H)"
   M="$(TZ=Asia/Kolkata date +%M)"
+  CYCLE="$(TZ=Asia/Kolkata date -d '12 hours ago' +%F)"
 fi
 MINS=$((10#$H * 60 + 10#$M))
-echo "IST time now: $D $H:$M"
+CM=$(( (MINS - 720 + 1440) % 1440 ))
+echo "IST time now: $H:$M  | cycle: $CYCLE  | minutes into cycle: $CM"
 
 EVENT="${EVENT:-schedule}"
-MODE="none"; RUN="false"; MARK="false"
 TRIGGER="${INPUT_TRIGGER:-manual}"
+MODE="none"; RUN="false"; MARK="false"
+
+# Which mode (if any) is due right now?
+DUE="none"
+if [ "$CM" -ge "$DISCOVER_LO" ] && [ "$CM" -lt "$DISCOVER_HI" ] \
+   && [ "$(get_state discover)" != "$CYCLE" ]; then
+  DUE="discover"
+elif [ "$CM" -ge "$ENRICH_LO" ] && [ "$CM" -lt "$ENRICH_HI" ] \
+   && [ "$(get_state discover)" = "$CYCLE" ] \
+   && [ "$(get_state enrich)" != "$CYCLE" ]; then
+  DUE="enrich"
+fi
 
 if [ "$EVENT" = "workflow_dispatch" ] && [ "$TRIGGER" != "auto" ]; then
-  # Manual runs always go through, in the mode you picked.
+  # Manual run: always goes through, in the mode you picked, no marker.
   MODE="${INPUT_MODE:-discover}"; RUN="true"
 elif [ "$EVENT" = "workflow_dispatch" ]; then
-  # Apps Script clock trigger: counts as the daily run, once per IST day.
-  MODE="${INPUT_MODE:-discover}"; MARK="true"
-  if [ "$(get_state "$MODE")" != "$D" ]; then
-    if [ "$MODE" = "discover" ] || [ "$(get_state discover)" = "$D" ]; then RUN="true"; fi
-  fi
+  # Apps Script clock: only runs if the mode it asked for is the one that is due.
+  MODE="${INPUT_MODE:-discover}"
+  if [ "$DUE" = "$MODE" ]; then RUN="true"; MARK="true"; fi
 else
-  if [ "$MINS" -ge "$DISCOVER_LO" ] && [ "$MINS" -lt "$DISCOVER_HI" ] \
-     && [ "$(get_state discover)" != "$D" ]; then
-    MODE="discover"; RUN="true"; MARK="true"
-  elif [ "$MINS" -ge "$ENRICH_LO" ] && [ "$MINS" -lt "$ENRICH_HI" ] \
-     && [ "$(get_state discover)" = "$D" ] \
-     && [ "$(get_state enrich)" != "$D" ]; then
-    MODE="enrich"; RUN="true"; MARK="true"
-  fi
+  # GitHub cron backup.
+  if [ "$DUE" != "none" ]; then MODE="$DUE"; RUN="true"; MARK="true"; fi
 fi
 
 emit mode "$MODE"
 emit run "$RUN"
 emit mark "$MARK"
-emit date "$D"
-echo "Decision: mode=$MODE run=$RUN"
+emit date "$CYCLE"
+echo "Decision: mode=$MODE run=$RUN due=$DUE trigger=$EVENT/$TRIGGER"
