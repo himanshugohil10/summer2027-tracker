@@ -742,29 +742,12 @@ def format_email_address(first: str, last: str, domain: str, pattern: str) -> st
         return f"{first}_{last}@{domain}"
     return f"{first}.{last}@{domain}"
 
-def is_within_last_12_hours(date_str: str) -> bool:
-    """
-    Strictly verifies that the row's Date Added timestamp is within the last 12 hours.
-    Old rows (or date-only strings like '2026-10-13') return False so previously blank rows are untouched.
-    """
-    date_str = str(date_str or "").strip()
-    if not date_str or len(date_str) <= 10:
-        # Date-only strings without HH:MM:SS are from older runs -> skip!
-        return False
-    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
-        try:
-            row_dt = datetime.strptime(date_str, fmt)
-            diff = datetime.now() - row_dt
-            return timedelta(hours=-1) <= diff <= timedelta(hours=15)
-        except ValueError:
-            continue
-    return False
-
 def enrich_recent_emails():
     """
-    3:00 PM Scheduled Mode:
-    Scans rows added in the last 12 hours where Email ID (Col C) is blank,
+    Afternoon Scheduled Mode:
+    Scans EVERY row (regardless of when it was added) where Email ID (Col C) is blank,
     cross-verifies the LinkedIn URL slug, fills the work email, and marks status as PENDING or REVIEW.
+    Rows whose status is something other than PENDING (or blank), e.g. already contacted, are left alone.
     """
     service = get_sheets_service()
     if not service or not SPREADSHEET_ID:
@@ -781,6 +764,7 @@ def enrich_recent_emails():
     updates = []
     auto_pending_count = 0
     review_count = 0
+    unresolved_count = 0  # blank-email rows we could not build an address for (no usable last name / domain)
     summary_lines = []
 
     for idx, r in enumerate(rows):
@@ -790,23 +774,23 @@ def enrich_recent_emails():
         email_cell = r[2] if len(r) > 2 else ""
         linkedin_url = r[3] if len(r) > 3 else ""
         status_cell = (r[6] if len(r) > 6 else "").strip().upper()
-        date_added = r[7] if len(r) > 7 else ""
 
-        # 1. Skip if Email ID is already filled or status is not PENDING
-        if email_cell.strip() or status_cell != "PENDING":
+        # Skip if Email ID is already filled, or the row has moved on (status other than PENDING/blank).
+        # No age cutoff: every blank email is filled, however old the row is.
+        if email_cell.strip() or status_cell not in ("PENDING", ""):
             continue
-
-        # 2. STRICT 12-HOUR CUTOFF: Never touch older intentionally blank rows!
-        if not is_within_last_12_hours(date_added):
+        if not name_cell.strip() or not company.strip():
             continue
 
         first, last, slug_verified = extract_verified_first_last(name_cell, linkedin_url)
         if not first or not last:
+            unresolved_count += 1
             continue
 
         domain, pattern, pattern_verified = resolve_company_email_format(company, pattern_cache)
         guessed_email = format_email_address(first, last, domain, pattern)
         if not guessed_email:
+            unresolved_count += 1
             continue
 
         clean_comp = clean_company_for_search(company).lower()
@@ -847,12 +831,12 @@ def enrich_recent_emails():
         if len(summary_lines) > 10:
             preview += f"\n_...and {len(summary_lines) - 10} more enriched rows on the sheet._"
         desc = (
-            f"🎯 **Afternoon Work Email Enrichment Complete (Last 15h Entries Only)!**\n\n"
+            f"🎯 **Afternoon Work Email Enrichment Complete (All Blank Emails)!**\n\n"
             f"• 🟢 **High-Confidence (`PENDING` - Ready to Send):** {auto_pending_count}\n"
             f"• 🟡 **Needs Quick Glance (`REVIEW`):** {review_count}\n"
-            f"• 🔒 *All rows older than 15 hours were left untouched.*\n\n"
+            f"• ⚪ **Could not build an email (no usable last name/domain):** {unresolved_count}\n\n"
             f"📊 **[Open Google Sheets Tracker]({sheet_link})**\n\n"
-            f"**Enriched Emails:**\n" + (preview or "_No new blank rows from the last 15 hours._")
+            f"**Enriched Emails:**\n" + (preview or "_No blank email cells to fill._")
         )
         embed = {
             "title": "📧 Afternoon Automated Work Email Enricher",

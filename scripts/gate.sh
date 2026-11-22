@@ -44,7 +44,7 @@ STATE_FILE="${STATE_FILE:-run_state.json}"
 DISCOVER_LO=420   # 19:00 IST
 DISCOVER_HI=750   # 00:30 IST
 ENRICH_LO=780     # 01:00 IST
-ENRICH_HI=1080    # 06:00 IST  (enrich only touches rows added in the last ~15h)
+ENRICH_HI=1080    # 06:00 IST
 
 get_state() {
   # prints the YYYY-MM-DD stored for key $1, or nothing

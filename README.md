@@ -11,7 +11,7 @@ The workflow runs two jobs every day. All timings are in **IST** (no daylight sa
 | Target time | Boston equivalent | Mode | What it does |
 |---|---|---|---|
 | ~7:30 PM IST | ~9 AM (10 AM in summer) | `discover` | Finds new internships, finds alumni at each company, appends rows to the sheet, posts a Discord digest |
-| ~1:30 AM IST | ~3 PM (4 PM in summer) | `enrich` | Fills in guessed work emails for rows added in the last 15 hours and flags how confident each guess is |
+| ~1:30 AM IST | ~3 PM (4 PM in summer) | `enrich` | Fills in guessed work emails for **every** row with a blank email cell (no matter when it was added) and flags how confident each guess is |
 
 **Scheduling.** GitHub Actions starts scheduled workflows late (sometimes hours) and occasionally drops them, so exact times can't be guaranteed. Instead, the workflow triggers several times and `scripts/gate.sh` decides what to do. Because enrich runs after midnight IST, a "cycle" rolls over at 12:00 noon IST rather than at midnight:
 
@@ -43,7 +43,7 @@ The workflow runs two jobs every day. All timings are in **IST** (no daylight sa
 
 ### 2. Enrich (`python tracker.py --enrich`)
 
-For rows from the last 12 hours that have no email and status `PENDING`:
+For every row that has no email and status `PENDING` (or blank), regardless of age. Rows with any other status, such as ones you've already contacted, are left alone:
 
 1. Cross-check the person's name against their LinkedIn URL slug.
 2. Look up the company's email format (a built-in table first, then one Serper lookup, then a `first.last@company.com` guess).
